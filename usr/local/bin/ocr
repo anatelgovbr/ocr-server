@@ -1,0 +1,591 @@
+#! /usr/bin/perl -w
+#
+#	OCR Server 1.0 - (c) Agência Nacional de Telecomunicações
+#
+#	This script monitors a set of input directories for PDF files
+#	once a new file is detected, it is processes through tesseract OCR
+#	in order to generate a new file with a hidden searchable text layer
+#
+#	It may be distributed under the conditions of the LGPL v2.1 license.
+#
+#	Author: Guilherme Chehab 
+#
+#	Version History:
+#	0.1	Initial single server version
+#	0.2	Check if page already has the html hidden layer, if so, ignore it
+#	0.3	Solved issues about various image enconding types
+#	0.4	Added a postnormalization step to ensure all output pdf pages have
+#		the same size and orientations as the original files
+#	0.5	Used input file renaming as a way to sync multiple parallel instances,
+#		that way, it is minimized the risk of same file being OCRed multiple times.
+#	0.6	Added a default handler for unknown image encoding using jpeg encoding	
+#	0.7	Solved an issue with files with more than 1000 pages
+#	1.0	First release version
+#
+#	Check software requirements on the comments bellow
+#
+#	To configure input dirs change @BASE_DIRS and @SUB_DIRS variables
+
+use warnings;
+use strict;
+
+use File::Find::Rule;
+use File::Basename;
+use File::Copy;
+use File::Path qw (remove_tree make_path);
+use File::Touch;
+use Fcntl qw( :flock );
+use Sys::Syslog;
+use POSIX;
+#use POSIX ":sys_wait_h";
+use Sys::Hostname;
+use IPC::Open3;
+use IO::Select;
+
+my $DEBUG = 0;
+my $MAX_PGS = ($DEBUG==2 ? 1 : `cat /proc/cpuinfo  | grep CPU | wc -l`);
+my $MAX_FILES = ( !$DEBUG ? 2 : 1) ;
+
+my $USER = 'ocr';
+
+# Command dependencies
+
+# depends on tesseract-ocr an tesseract-ocr-por 3.05-dev or higher
+my $TESSERACT = '/usr/local/bin/tesseract -l por+eng';
+
+# Depends on pdftk 2.02 or higher
+my $PDFTK = '/usr/local/bin/pdftk';
+
+# Depends on poppler-utils 0.42.0 or higher
+#my $PDINFO = '/usr/local/bin/pdfinfo';
+my $PDFFONTS = '/usr/local/bin/pdffonts';
+my $PDFIMAGES = '/usr/local/bin/pdfimages';
+my $PDFTOPPM = '/usr/local/bin/pdftoppm';
+
+# Depends on cpdf 3.3 or higher
+my $CPDF = '/usr/local/bin/cpdf';
+
+# Depends on ImageMagick and http://www.fmwconcepts.com/imagemagick/downloadcounter.php?scriptname=textcleaner&dirname=textcleaner
+#my $FILTER = '/usr/local/bin/textcleaner -g -e stretch -f 25 -o 10 -u -s 1 -T -p 10 ';
+
+my $CONVERT = '/usr/bin/convert';
+
+my @BASE_DIRS = (	'/mnt/protocolo_sede/DIGITALIZAÇÃO/ARQUIVOS PROTOCOLO/OCR/',
+			'/mnt/protocolo_sede/DIGITALIZAÇÃO/ARQUIVOS_PROCESSOS/OCR/' );
+
+my %SUB_DIRS = ( 'IN'=>'Entrada', 'OUT'=>'Saida', 'PROC'=>'Originais_Processados', 'TEMP'=>'/tmp/ocr_tmp', 'ERROR' => 'Erro' );
+
+@BASE_DIRS = ( '/tmp/ocr_dev/') if ($DEBUG==2);
+%SUB_DIRS = ( 'IN'=>'Entrada', 'OUT'=>'Saida', 'PROC'=>'Originais_Processados', 'TEMP'=>'/tmp/ocr_dev/tmp', 'ERROR' => 'Erro' ) if ($DEBUG);
+
+
+$ENV{'PATH'} = '/usr/local/bin:/bin:/usr/bin';
+my ($host) = split/\./,hostname;
+
+use vars qw/*name *dir *prune/;
+*name   = *File::Find::name;
+*dir    = *File::Find::dir;
+*prune  = *File::Find::prune;
+
+sub main;
+sub get_pages;
+sub get_rotation;
+sub get_res;
+sub is_ocred;
+sub is_locked_ex;
+
+
+my $expr = 'use POSIX qw(setsid)';
+
+my ($dumb1, $dumb2, $uid) = getpwnam ($USER);
+setuid ($uid) or warn "Cant set uid $uid";
+
+$SIG{__DIE__}  = 'DEFAULT';
+$SIG{__WARN__} = \&die_when_called;
+#$SIG{CHLD} = 'IGNORE';
+eval $expr;
+if ($@) {
+    die "$0: cannot get POSIX::setsid since eval '$expr' failed: $@\n";
+}
+chdir('/') or die "$0: cannot chdir '/': $!\n";
+open(STDIN, '/dev/null') or die "$0: cannot open '/dev/null': $!\n";
+
+foreach my $DIR (@BASE_DIRS) {
+
+    defined(my $pid = fork) or die "$0: cannot fork: $!\n";
+    if (!$pid) {
+	#$SIG{CHLD} = 'IGNORE';
+	POSIX::setsid() or die "$0: cannot start a new session: $!\n";
+	main ($DIR, $DIR.$SUB_DIRS{IN}, $DIR.$SUB_DIRS{OUT}, $DIR.$SUB_DIRS{PROC}, $SUB_DIRS{TEMP}, $DIR.$SUB_DIRS{ERROR}); 
+	exit 0;
+	last;
+    } 
+}
+
+exit 0;
+
+sub main {
+	my ($DIR, $IN, $OUT, $PROC, $TEMP, $ERRO) = @_;
+
+	my %files_in;
+	my %pids;
+	my $count=0;
+
+	$0 = 'ocr_dev' if ($DEBUG);
+
+	# Clean previous executions -- must be rewritten to permit multiple daemons running on same dir
+
+	# Remove old temp files
+	remove_tree (${TEMP},{ keep_root=>1 , error=> \my $dumb });
+
+	#  remove .tmp file
+	unlink ( find ( file => name =>  qr/\.${host}\.tmp$/i , in => ${IN} ) );
+
+	# Rename files that were in 'processig' back
+	foreach my $file ( find ( file => name =>  qr/\.${host}\.processing$/i , in => ${IN} ) ) {
+		my $old_name = $file;
+		$old_name =~ s/\.${host}\.processing$//g;
+		move ($file, $old_name);
+	}
+
+	# Open log file
+	openlog ("ocr","ndelay,pid","local0") if !$DEBUG;
+	syslog ("info","OCR started, monitoring: ".$DIR) if (!$DEBUG);
+
+	$SIG {TERM} = $SIG{HUP}  = sub {
+		syslog ("info","OCR stopped monitor: ".$DIR)  if (!$DEBUG);
+		exit 0;
+	}; 
+	
+
+	# Main loop
+	while ( 1 ) {	
+		select (undef, undef, undef, rand 3); 	# Random sleep so multiple instances dont get synced
+		$files_in {$_} = (!defined $files_in {$_} ? 1 : $files_in {$_}) for ( find ( file => name =>  qr/\.pdf$/i , in => ${IN} ));
+		print "\nFound ", scalar keys %files_in, " in $IN\n" if $DEBUG && $count != scalar keys %files_in;
+		$count = scalar keys %files_in;
+		foreach my $file (keys %files_in) {
+
+			next if ( glob ("$file.*.tmp")); 		
+
+			select (undef, undef, undef, 1 + rand 2);	# sleep between 1 and 3 seconds
+			next if (!defined $files_in{$file});	# continue only if it is still valid
+			next if ($files_in{$file}==2); 		# if in  file already is in processing
+
+			if ($files_in {$file} == 1) {
+
+				# Skip locked files -- should try again on next iteration 
+				if ( is_locked_ex ($file)) {
+					delete $files_in {$file};
+					next;
+				}
+
+				# Cleanup deleted pids before forking again
+				while (scalar keys %pids >= $MAX_FILES) { 
+					my @ended = child_wait (\%pids);
+					foreach my $ended_pid (@ended) {
+						delete $files_in{$pids{$ended_pid}};
+						delete $pids{$ended_pid};
+					}
+				};
+
+				if (!glob( "$file.*.tmp")) { 		# Do nothing with files in processing by another process
+					if (my $pid = fork) {
+						while (! glob ("$file.$host.tmp")) {sleep 1;};	# Wait until temp file is created
+						$files_in{$file} = 2;
+						$pids{$pid}=$file;
+					} else {
+						touch ("$file.$host.tmp");
+						while (! glob ("$file.$host.tmp")) {sleep 1;};	# Wait until temp file is created
+						select (undef, undef, undef, 1 + rand 2);	# sleep between 1 and 3 seconds
+						ocr ( $DIR, $IN, $OUT, $PROC, $TEMP, $ERRO, $file);
+						exit (0); # It is never executed
+					}
+				} else {
+					next;
+				}
+			}
+		}
+
+		# Cleanup periodicaly
+		foreach my $pid (keys (%pids)) {
+			if (waitpid ($pid,WNOHANG)==-1) {
+				delete $files_in{$pids{$pid}};
+				delete $pids{$pid};
+			}
+		}
+
+		#if ($DEBUG==2) {
+		#	child_wait (\%pids);
+		#	exit;
+		#}
+	}
+}
+
+sub ocr {
+	my ($DIR, $IN, $OUT, $PROC, $TMP, $ERROR, $in_file) = @_;
+	my ($in_name, $in_path, $in_suffix) = fileparse ($in_file);
+	my ($exit, $cmd, @out,@err);
+
+	my $tmpdir = $TMP .'/'.$in_name.'.' . $$;
+	touch ("$in_file.$host.tmp");
+
+	print "Will ocr $in_file\n" if ($DEBUG);
+
+	$0 = "ocr $in_name" if(!$DEBUG);
+
+	$SIG {TERM} = $SIG{HUP}  = sub {
+		while (wait () != -1) { sleep  1;};
+		remove_tree ($tmpdir,{ error=> \my $dumb });
+		unlink ("$in_file.$host.tmp");
+		move ( "$in_file.$host.processing", $in_file);
+		exit 0;
+	}; 
+
+	my $out_path = $in_path;
+	$out_path =~ s{${IN}}{$OUT};
+	my $out_file = $out_path.$in_name.($in_suffix ne ""? ".".$in_suffix: "");
+
+	my $proc_path = $in_path;
+	$proc_path =~ s{${IN}}{$PROC};
+	my $proc_file = $proc_path.$in_name.($in_suffix ne ""? ".".$in_suffix: "");
+	
+	my $error_path = $in_path;
+	$error_path =~ s{${IN}}{$ERROR};
+	my $error_file = $error_path.$in_name.($in_suffix ne ""? ".".$in_suffix: "");
+
+	print "\twritting to $out_file\n" if $DEBUG;
+				
+	my $stime = time;
+	my %pids;
+
+	if (!move ($in_file, "$in_file.$host.processing")) {
+		unlink ("$in_file.$host.tmp");
+		exit 0;
+	}
+
+        sleep 1 if (!$DEBUG);
+        select (undef, undef, undef, 2) if ($DEBUG);
+
+	# Create temp dir
+	make_path $tmpdir;
+
+	my $tmp_file = $tmpdir.'/'.$in_name.($in_suffix ne ""? ".".$in_suffix: "");
+	if (!copy ("$in_file.$host.processing", $tmp_file)) {
+		remove_tree ($tmpdir,{ error=> \my $dumb });
+		unlink ("$in_file.$host.tmp");
+                move ( "$in_file.$host.processing", $in_file);
+	};
+
+	# Extract pages
+	($exit, $cmd, @out,@err) = exec_cmd ("${PDFTK} \"${tmp_file}\" burst output \"${tmpdir}\"/pg_\%06d.pdf");
+        if ($DEBUG) {
+        	print "\t\t${tmp_file} -> ${cmd}: $exit\n";
+		print "\t\t\t$_" for @out ;
+                print "\t\t\t$_" for @err ;
+        };
+
+
+	my ($pages, @pg_w, @pg_h, @pg_r);
+	$pages = get_pages ($tmp_file, \@pg_w, \@pg_h, \@pg_r);
+	
+	my (@img_w, @img_h, @img_t);
+	$pages = get_imgs ( $tmp_file, \@img_w, \@img_h, \@img_t);
+
+
+	for ( my $i=0; $i< $pages; $i++ ) {
+		my $pg = sprintf ("pg_%06d", $i+1);
+
+		# Enforce fork limit
+		while (scalar keys %pids >= $MAX_PGS ) {
+			my @ended = child_wait (\%pids);
+			foreach my $ended_pid (@ended) {
+				delete $pids{$ended_pid};
+			}
+		}
+
+		if (my $pid=fork) {
+			$pids{$pid}=$pg;
+		} else {
+			$0 = "ocr $in_name (".($i+1)."/$pages)" if(!$DEBUG);
+			print "\t\t${in_file}: ".(${i}+1)." / $pages:  $pg_w[$i] x $pg_h[$i] - $pg_r[$i] & $img_w[$i] x $img_h[$i], $img_t[$i]\n" if $DEBUG;
+
+			if (! defined $img_t[$i] ) {
+				move ("${tmpdir}/${pg}.pdf","${tmpdir}/${pg}-cpdf.pdf");
+				exit 0;
+			}
+
+			if (is_ocred ("${tmpdir}/${pg}.pdf")) {
+				move ("${tmpdir}/${pg}.pdf","${tmpdir}/${pg}-cpdf.pdf");
+				exit 0;
+			}
+
+			undef $cmd;
+
+			if ($img_t[$i] eq "gray") {
+				$cmd = "${PDFIMAGES} -tiff \"${tmpdir}\"/${pg}.pdf \"${tmpdir}\"/${pg}";
+			}
+
+			if ($img_t[$i] eq "rgb") {
+				$cmd = "${PDFTOPPM} -jpeg -scale-to-x $img_w[$i] -scale-to-y $img_h[$i]  \"${tmpdir}\"/${pg}.pdf \"${tmpdir}\"/${pg}";
+				$pg_r[$i] = 0; # Do not rotate if it was extracted with PDFTOPPM
+			}
+
+			if (!defined $cmd) {
+				$cmd = "${PDFTOPPM} -jpeg -scale-to-x $img_w[$i] -scale-to-y $img_h[$i]  \"${tmpdir}\"/${pg}.pdf \"${tmpdir}\"/${pg}";
+				$pg_r[$i] = 0; # Do not rotate if it was extracted with PDFTOPPM
+			}
+		
+			($exit,$cmd,@out,@err) = exec_cmd($cmd);
+			if ($DEBUG) {
+				print "\t\t\t${pg}.pdf -> ${cmd}: $exit\n";
+                                print "\t\t\t\t$_" for @out ;
+                                print "\t\t\t\t$_" for @err ;
+                        };
+
+			# Process each resulting image for page pdf
+			my @images = ( find ( file => name =>  qr/${pg}.*\.(jpg|tif)/i , in => ${tmpdir} )) ;
+
+			foreach my $image (@images) { 
+				print "\t\t\t${image}: ".(${i}+1)." / $pages\n" if $DEBUG;
+	
+				# Check if page was rotated
+				if ($pg_r[$i]) {
+					print "\t\t\t${image} unrotate: $pg_r[$i] graus ".(${i}+1)." / $pages\n" if $DEBUG;
+					($exit,$cmd,@out,@err) = exec_cmd("${CONVERT} \"$image\" -rotate $pg_r[$i] \"$image\"");
+					if ($DEBUG) { 
+						print "\t\t\t${image} -> $cmd: $exit\n";
+						print "\t\t\t\t$_" for @out ;
+						print "\t\t\t\t$_" for @err ;
+					};
+				}
+
+				# Filter ppm images, if needed
+
+				# OCR ppm images to pdf pages
+				($exit,$cmd, @out,@err) = exec_cmd("${TESSERACT} \"${image}\" \"${image}\" pdf");
+				if ($DEBUG) { 
+					print "\t\t\t${image} -> $cmd: $exit\n";
+					print "\t\t\t\t$_" for @out ;
+					print "\t\t\t\t$_" for @err ;
+				};
+
+				# Scale to fit pdf
+				($exit,$cmd, @out,@err) = exec_cmd("${CPDF} -scale-to-fit \"$pg_w[$i] $pg_h[$i]\" \"${image}\".pdf -o \"${image}\"-cpdf.pdf");
+				if ($DEBUG) { 
+					print "\t\t\t${image} -> $cmd: $exit\n";
+					print "\t\t\t\t$_" for @out ;
+					print "\t\t\t\t$_" for @err ;
+				};
+
+
+				unlink ("${tmpdir}/${pg}.pdf") if (!$DEBUG);
+				unlink ("$image.pdf") if (!$DEBUG);
+				move ("${tmpdir}/${pg}.pdf","${tmpdir}/${pg}.pdf.old") if ($DEBUG);
+				unlink ("$image") if (!$DEBUG);
+			}
+			exit 0;
+		}
+	}
+
+
+	# Wait all pages to complete
+	while (wait () != -1) { sleep  1;};
+
+	# Check if all pages where converted.
+	my @new_pages = ( find ( file => name =>  qr/pg_.*-cpdf.pdf$/i , in => ${tmpdir} )) ;
+
+	if (scalar @new_pages != $pages) {
+		print "\t\t${out_file} -> Number of output pages differ (Orig.: $pages x New: ".scalar @new_pages."): $exit\n" if ($DEBUG);
+		syslog ("info","OCR: $in_file, number of output pages differ") if (!$DEBUG);
+		unlink "$in_file.$host.tmp";
+		move ("$in_file.$host.processing", $error_file);
+		exit (0);
+	}
+
+	# Merge resulting pdf pages to a single pdf
+	make_path ($out_path) if ( ! -d $out_path);
+	unlink $out_file if ( -f $out_file );
+	($exit, $cmd, @out,@err) = exec_cmd("${PDFTK} \"${tmpdir}\"/pg_*-cpdf.pdf cat output \"${out_file}.tmp\" compress");
+	if ($DEBUG) {
+		print "\t\t${out_file} -> $cmd: $exit\n";
+	        print "\t\t\t$_" for @out ;
+        	print "\t\t\t$_" for @err ;
+	};
+
+	make_path ($proc_path) if ( ! -d $proc_path);
+	unlink $proc_file if ( -f $proc_file );
+	move ("$in_file.$host.processing", $proc_file);
+	move ("${out_file}.tmp", ${out_file});
+
+
+	# Remove temp dir
+	remove_tree ($tmpdir,{ error=> \my $dumb }) if (!$DEBUG);
+	unlink $tmp_file if (!$DEBUG);
+	unlink "$in_file.$host.tmp";
+	unlink "$in_file.png";
+
+	my $etime = time;
+
+	print "OCR processed: $in_file OCRed (${pages} pages in ".($etime-$stime)." segs - ". sprintf ("%.2f",($etime-$stime)/$pages)." segs/page)\n" if $DEBUG;
+	syslog ("info","OCR processed: $in_file(${pages} pages in ".($etime-$stime)." segs - ". sprintf ("%.2f",($etime-$stime)/$pages)." segs/page)") if !$DEBUG;
+
+	exit (0);	
+}
+
+sub is_ocred {
+	my ($in_file) = @_;
+	my @fonts = `${PDFFONTS} -l 10 \"${in_file}\" 2>/dev/null`;
+
+	return ( scalar @fonts > 2 ? 1 :0 );
+}	
+
+sub get_pages {
+	my ($in_file, $w, $h, $r) = @_;
+
+	my $pages=0;
+	my $i=0;
+
+	my $dumb;
+
+	my ($exit, $cmd, @lines, @err) = exec_cmd("${PDFTK} \"${in_file}\" dump_data");
+
+	foreach (@lines)  {
+		chomp;
+		($dumb, $pages) = split / {1,}/  if ( $_ =~ /NumberOfPages:/ );
+		($dumb, $i )    = split / {1,}/  if ( $_ =~ /PageMediaNumber:/ );
+		($dumb, @$r[$i-1]) = split / {1,}/  if ( $_ =~ /PageMediaRotation:/ );
+		($dumb, @$w[$i-1], @$h[$i-1]) = split / {1,}/  if ( $_ =~ /PageMediaDimensions:/ );
+	}
+
+	return $pages;
+}
+
+sub get_imgs {
+	my ($in_file, $w, $h, $t) = @_;
+        my ($dumb, $i, $width, $height, $type);
+
+	my ($exit, $cmd, @lines, @err) = exec_cmd("${PDFIMAGES} -list \"${in_file}\"");
+
+	foreach my $line (@lines)  {
+                chomp $line;
+		$line =~ s/^ {1,}//;
+		if ( $line =~  /image|mask/ ) {
+			($i , $dumb, $dumb, $width, $height, $type) = split / {1,}/,$line;
+			@$w[$i-1] = $width;
+			@$h[$i-1] = $height;
+			@$t[$i-1] = (  $type eq "-" ? "rgb" : $type );
+			@$t[$i-1] = (  $type eq "icc" ? "rgb" : $type );
+			@$t[$i-1] = (  $type eq "index" ? "rgb" : $type );
+		}
+        }
+	return $i;
+}
+
+sub get_rotation {
+	my ($in_file) = @_;
+
+	my $rotation=0;
+	my @lines = `${PDFTK} \"${in_file}\" dump_data 2>/dev/null`;
+
+	foreach (@lines)  {
+		chomp;
+		(my $dumb, $rotation) = split / /  if ( $_ =~ /PageMediaRotation:/ );
+	}
+	return $rotation;
+}
+
+sub get_res {
+	my ($in_file) = @_;
+
+	my $res_x=0;
+	my $res_y=0;
+	my @lines = `${PDFTK} \"${in_file}\" dump_data 2>/dev/null`;
+
+	foreach (@lines)  {
+		chomp;
+		(my $dumb, $res_x, $res_y) = split / /  if ( $_ =~ /PageMediaDimensions:/ );
+		$res_x=sprintf ("%.f", $res_x);
+		$res_y=sprintf ("%.f", $res_y);
+	}
+	return ($res_x,$res_y);
+}
+
+sub is_locked_ex {
+    my ($path) = @_;
+
+    warn "Not a plain file: '$path'" if ( $DEBUG & (! -f $path )) ;
+    return 1 unless open my $fh, '<', $path;
+
+    my $ret = not flock $fh, LOCK_SH | LOCK_NB;
+    close $fh
+        or warn "Cannot close '$path': $!";
+
+    return $ret;
+}
+
+sub child_wait {
+	my ($pids,$time) = @_;
+	my $count = scalar keys (%$pids);
+	my @ended;
+	
+	my $found=0;
+	while (!$found) {
+		foreach my $pid (keys (%$pids)) {
+			if (waitpid ($pid,WNOHANG)==-1) {
+				$found++;
+				push @ended, $pid;
+				next;
+			}
+		}
+		sleep 1 if (!$found);
+	}
+
+	return @ended;
+}
+
+sub exec_cmd {
+	my ($cmd) = @_;
+	my $rc;
+	my @out=();
+	my @err=();
+
+	my $pid = open3(*CMD_IN, *CMD_OUT, *CMD_ERR, $cmd);
+
+	$SIG{CHLD} = sub {
+		$rc = ($? >>8); 
+	};
+
+	print CMD_IN "";
+	close(CMD_IN);
+
+	my $selector = IO::Select->new();
+	$selector->add(*CMD_ERR, *CMD_OUT);
+
+	while (my @ready = $selector->can_read) {
+	    foreach my $fh (@ready) {
+        	if (fileno($fh) == fileno(CMD_ERR)) { 
+			while (<CMD_ERR>) {
+				push @err,$_;
+			}
+		} else {
+        		while (<CMD_OUT>) {
+				push @out,$_;
+			}
+		}
+        	if (eof ($fh)) {
+			$rc = ($? >>8) if (waitpid($pid, 0)>0);
+			$selector->remove($fh);
+		}
+	    }		
+	}
+
+	$rc = ($? >>8) if (waitpid($pid, 0)>0);
+
+	close(CMD_OUT);
+	close(CMD_ERR);
+
+	$SIG{CHLD} = 'IGNORE';
+
+	return $rc,$cmd,@out,@err;
+} 

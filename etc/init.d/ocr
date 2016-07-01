@@ -1,0 +1,80 @@
+#!/bin/sh
+#
+# chkconfig: - 24 73
+# description: Starts and stops the Samba winbind daemon
+#	       #
+# pidfile: /var/run/winbindd.pid
+# config:  /etc/samba/smb.conf
+
+
+# Source function library.
+. /etc/rc.d/init.d/functions
+
+# Avoid using root's TMPDIR
+unset TMPDIR
+
+RETVAL=0
+
+
+start() {
+        KIND="OCR"
+	echo -n $"Starting $KIND services: "
+	daemon /usr/local/bin/ocr
+	RETVAL=$?
+	echo
+	[ $RETVAL -eq 0 ] && touch /var/lock/subsys/ocr || RETVAL=1
+	return $RETVAL
+}	
+
+stop() {
+        echo
+	KIND="OCR"
+	echo -n $"Shutting down $KIND services: "
+	killproc ocr
+	RETVAL=$?
+	[ $RETVAL -eq 0 ] && rm -f /var/lock/subsys/ocr
+	echo ""
+	return $RETVAL
+}	
+
+restart() {
+	stop
+	start
+}	
+
+rhstatus() {
+	status ocr
+	return $?
+}	
+
+# Allow status as non-root.
+if [ "$1" = status ]; then
+       rhstatus
+       exit $?
+fi
+
+# Check that we are root ... so non-root users stop here
+[  `id -u` -eq  "0" ] ||  exit 4
+
+case "$1" in
+  start)
+  	start
+	;;
+  stop)
+  	stop
+	;;
+  restart)
+  	restart
+	;;
+  status)
+  	rhstatus
+	;;
+  condrestart)
+  	[ -f /var/lock/subsys/ocr ] && restart || :
+	;;
+  *)
+	echo $"Usage: $0 {start|stop|restart|status|condrestart}"
+	exit 2
+esac
+
+exit $?
