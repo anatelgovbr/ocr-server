@@ -1,6 +1,6 @@
 #! /usr/bin/perl -w
 #
-#	OCR Server 1.0 - (c) Agência Nacional de Telecomunicações
+#	OCR Server 1.0.1 - (c) Agencia Nacional de Telecomunicacoes
 #
 #	This script monitors a set of input directories for PDF files
 #	once a new file is detected, it is processes through tesseract OCR
@@ -21,6 +21,11 @@
 #	0.6	Added a default handler for unknown image encoding using jpeg encoding	
 #	0.7	Solved an issue with files with more than 1000 pages
 #	1.0	First release version
+#	1.0.1	Solving error when file has no images
+#
+#	TODO: 	- Changes get_imgs and OCR processing to enable pages with more than one image -- it
+#		would not work on previous versions that assumed #pages = #imgs. Version 1.1 counts them
+#		diferently but does not treat it adequately
 #
 #	Check software requirements on the comments bellow
 #
@@ -288,10 +293,9 @@ sub ocr {
 
 	my ($pages, @pg_w, @pg_h, @pg_r);
 	$pages = get_pages ($tmp_file, \@pg_w, \@pg_h, \@pg_r);
-	
-	my (@img_w, @img_h, @img_t);
-	$pages = get_imgs ( $tmp_file, \@img_w, \@img_h, \@img_t);
 
+	my ($imgs,@page_img,  @img_w, @img_h, @img_t);
+	$imgs = get_imgs ( $tmp_file, \@page_img, \@img_w, \@img_h, \@img_t);
 
 	for ( my $i=0; $i< $pages; $i++ ) {
 		my $pg = sprintf ("pg_%06d", $i+1);
@@ -308,17 +312,20 @@ sub ocr {
 			$pids{$pid}=$pg;
 		} else {
 			$0 = "ocr $in_name (".($i+1)."/$pages)" if(!$DEBUG);
-			print "\t\t${in_file}: ".(${i}+1)." / $pages:  $pg_w[$i] x $pg_h[$i] - $pg_r[$i] & $img_w[$i] x $img_h[$i], $img_t[$i]\n" if $DEBUG;
-
-			if (! defined $img_t[$i] ) {
-				move ("${tmpdir}/${pg}.pdf","${tmpdir}/${pg}-cpdf.pdf");
-				exit 0;
-			}
 
 			if (is_ocred ("${tmpdir}/${pg}.pdf")) {
 				move ("${tmpdir}/${pg}.pdf","${tmpdir}/${pg}-cpdf.pdf");
+				print "\t\t${in_file}: ".(${i}+1)." / $pages: Page already has text layer, ignoring page\n" if $DEBUG;
 				exit 0;
 			}
+
+			if (! defined $img_t[$i] ) {
+				move ("${tmpdir}/${pg}.pdf","${tmpdir}/${pg}-cpdf.pdf");
+				print "\t\t${in_file}: ".(${i}+1)." / $pages: Undefined image type on page, ignoring page\n" if $DEBUG;
+				exit 0;
+			}
+
+			print "\t\t${in_file}: ".(${i}+1)." / $pages:  $pg_w[$i] x $pg_h[$i] - $pg_r[$i] & $img_w[$i] x $img_h[$i], $img_t[$i]\n" if $DEBUG;
 
 			undef $cmd;
 
@@ -462,8 +469,8 @@ sub get_pages {
 }
 
 sub get_imgs {
-	my ($in_file, $w, $h, $t) = @_;
-        my ($dumb, $i, $width, $height, $type);
+	my ($in_file, $page_img, $w, $h, $t) = @_;
+        my ($dumb, $i, $page, $width, $height, $type);
 
 	my ($exit, $cmd, @lines, @err) = exec_cmd("${PDFIMAGES} -list \"${in_file}\"");
 
@@ -471,15 +478,16 @@ sub get_imgs {
                 chomp $line;
 		$line =~ s/^ {1,}//;
 		if ( $line =~  /image|mask/ ) {
-			($i , $dumb, $dumb, $width, $height, $type) = split / {1,}/,$line;
-			@$w[$i-1] = $width;
-			@$h[$i-1] = $height;
-			@$t[$i-1] = (  $type eq "-" ? "rgb" : $type );
-			@$t[$i-1] = (  $type eq "icc" ? "rgb" : $type );
-			@$t[$i-1] = (  $type eq "index" ? "rgb" : $type );
+			($page, $i , $dumb, $width, $height, $type) = split / {1,}/,$line;
+			@$page_img[$page-1]=$i;
+			@$w[$page-1] = $width;
+			@$h[$page-1] = $height;
+			@$t[$page-1] = (  $type eq "-" ? "rgb" : $type );
+			@$t[$page-1] = (  $type eq "icc" ? "rgb" : $type );
+			@$t[$page-1] = (  $type eq "index" ? "rgb" : $type );
 		}
         }
-	return $i;
+	return $i+1;
 }
 
 sub get_rotation {
