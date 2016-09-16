@@ -67,7 +67,7 @@ my $PDFFONTS = '/usr/local/bin/pdffonts';
 my $PDFIMAGES = '/usr/local/bin/pdfimages';
 my $PDFTOPPM = '/usr/local/bin/pdftoppm';
 
-# Depends on cpdf 3.3 or higher
+# Depends on cpdf 2.1 or higher
 my $CPDF = '/usr/local/bin/cpdf';
 
 # Depends on ImageMagick and http://www.fmwconcepts.com/imagemagick/downloadcounter.php?scriptname=textcleaner&dirname=textcleaner

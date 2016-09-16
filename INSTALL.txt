@@ -45,7 +45,7 @@
 # - Tesseract-ocr 3.05, com dicionários inglês e português
 # - Pdftk 2.02
 # - Poppler-utils 0.42.0
-# - Cpdf 3.3
+# - Cpdf 2.1
 # - ImageMagick 6.7.2-7
 #	
 # Na ausência deles na distribuição do sistema operacional, o uso de versões antigas desses componentes podem comprometer o correto funcionamento do sistema
@@ -118,7 +118,7 @@ cd libav && ./configure --enable-sram && make -j8 all install && cd ..
 cd tesseract && ./autogen.sh && ./configure && make -j 8 all install && cd ..
 cp -avR tessdata/* /usr/local/share/tessdata/
 
-# cpdf, versão 3.3 ou superior
+# cpdf, versão 2.1 ou superior
 cd ocaml && ./configure && make world.opt && make install && cd ..
 mkdir -p /usr/local/man/man5
 cd lib-findlib  && ./configure && make all && make install && cd ..
