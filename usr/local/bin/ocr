@@ -22,10 +22,16 @@
 #	0.7	Solved an issue with files with more than 1000 pages
 #	1.0	First release version
 #	1.0.1	Solving error when file has no images
+#	1.0.2	Fix bug when counting cores for AMD processors
+#	1.0.3	Added better image type detection	
 #
 #	TODO: 	- Changes get_imgs and OCR processing to enable pages with more than one image -- it
 #		would not work on previous versions that assumed #pages = #imgs. Version 1.1 counts them
 #		diferently but does not treat it adequately
+#		- Review poppler and cpdf install instructions
+#		- Add better handling of vectorized and non scanned pdf files
+#		- Add option to generate multi-page tiff files to reduce overhead (one for each CPU core)
+#		- Check mean saturation for addiotional colored images detection and automatically convert to B&W if possible
 #
 #	Check software requirements on the comments bellow
 #
@@ -48,10 +54,11 @@ use IPC::Open3;
 use IO::Select;
 
 my $DEBUG = 0;
-my $MAX_PGS = ($DEBUG==2 ? 1 : `cat /proc/cpuinfo  | grep CPU | wc -l`);
+my $MAX_PGS = ($DEBUG==2 ? 1 : `cat /proc/cpuinfo  | grep -e '^processor' | wc -l`);
 my $MAX_FILES = ( !$DEBUG ? 2 : 1) ;
 
 my $USER = 'ocr';
+my $CHECK_COLOR = 0; # If it has to check if image is reaaly colored or if it can be converted to gray scale or B&W
 
 # Command dependencies
 
@@ -70,10 +77,11 @@ my $PDFTOPPM = '/usr/local/bin/pdftoppm';
 # Depends on cpdf 2.1 or higher
 my $CPDF = '/usr/local/bin/cpdf';
 
-# Depends on ImageMagick and http://www.fmwconcepts.com/imagemagick/downloadcounter.php?scriptname=textcleaner&dirname=textcleaner
-#my $FILTER = '/usr/local/bin/textcleaner -g -e stretch -f 25 -o 10 -u -s 1 -T -p 10 ';
-
+## Depends on ImageMagick and http://www.fmwconcepts.com/imagemagick/downloadcounter.php?scriptname=textcleaner&dirname=textcleaner
 my $CONVERT = '/usr/bin/convert';
+
+# If it is needed further filtering
+#my $FILTER = '/usr/local/bin/textcleaner -g -e stretch -f 25 -o 10 -u -s 1 -T -p 10 ';
 
 my @BASE_DIRS = (	'/mnt/protocolo_sede/DIGITALIZAÇÃO/ARQUIVOS PROTOCOLO/OCR/',
 			'/mnt/protocolo_sede/DIGITALIZAÇÃO/ARQUIVOS_PROCESSOS/OCR/' );
@@ -83,6 +91,8 @@ my %SUB_DIRS = ( 'IN'=>'Entrada', 'OUT'=>'Saida', 'PROC'=>'Originais_Processados
 @BASE_DIRS = ( '/tmp/ocr_dev/') if ($DEBUG==2);
 %SUB_DIRS = ( 'IN'=>'Entrada', 'OUT'=>'Saida', 'PROC'=>'Originais_Processados', 'TEMP'=>'/tmp/ocr_dev/tmp', 'ERROR' => 'Erro' ) if ($DEBUG);
 
+# Safeguard im case of cpuinfo has not identified correctly the number of CPUs 
+$MAX_PGS = ($MAX_PGS==0) ? 4 : $MAX_PGS;
 
 $ENV{'PATH'} = '/usr/local/bin:/bin:/usr/bin';
 my ($host) = split/\./,hostname;
@@ -355,6 +365,18 @@ sub ocr {
 
 			foreach my $image (@images) { 
 				print "\t\t\t${image}: ".(${i}+1)." / $pages\n" if $DEBUG;
+			
+				# Check if image can be safely colour reduced
+				if ($CHECK_COLOR) {
+					$cmd = "${CONVERT} ${image} \Q(\E -clone 0 -colorspace gray \Q)\E  -compose difference -composite -separate -evaluate-sequence mean -threshold 4% -format \"%[fx:mean]\" info:";
+					($exit, $cmd, @out, @err) = exec_cmd ($cmd);
+					if ($DEBUG) {
+                        	        	print "\t\t\t${image}-> ${cmd}: $exit\n";
+	                        	        #print "\t\t\t\t$_" for @out ;
+        	                        	print "\t\t\t\t$_" for @err ;
+						print "\t\t\t\tImage is probably " . ( $out[0]<0.1 ? "B&W" : "Colored") . " (mean saturation: $out[0])\n";
+					}
+				}
 	
 				# Check if page was rotated
 				if ($pg_r[$i]) {
@@ -470,7 +492,7 @@ sub get_pages {
 
 sub get_imgs {
 	my ($in_file, $page_img, $w, $h, $t) = @_;
-        my ($dumb, $i, $page, $width, $height, $type);
+        my ($dumb, $i, $page, $type, $width, $height, $color, $comp, $bpc, $enc);
 
 	my ($exit, $cmd, @lines, @err) = exec_cmd("${PDFIMAGES} -list \"${in_file}\"");
 
@@ -478,13 +500,13 @@ sub get_imgs {
                 chomp $line;
 		$line =~ s/^ {1,}//;
 		if ( $line =~  /image|mask/ ) {
-			($page, $i , $dumb, $width, $height, $type) = split / {1,}/,$line;
+			($page, $i , $type, $width, $height, $color, $comp, $bpc, $enc) = split / {1,}/,$line;
 			@$page_img[$page-1]=$i;
 			@$w[$page-1] = $width;
 			@$h[$page-1] = $height;
-			@$t[$page-1] = (  $type eq "-" ? "rgb" : $type );
-			@$t[$page-1] = (  $type eq "icc" ? "rgb" : $type );
-			@$t[$page-1] = (  $type eq "index" ? "rgb" : $type );
+			@$t[$page-1] = "rgb"; 	# Default is color
+			@$t[$page-1] = ( $comp == 3 || $bpc >  1 || $enc   eq "jpeg" || $color eq "-"    || $color eq "icc"  ? "rgb"  : @$t[$page-1]); 
+			@$t[$page-1] = ( $comp == 1 || $bpc == 1 || $enc   eq "ccitt"|| $color eq "gray" ||  $type eq "mask" ? "gray" : @$t[$page-1]); 
 		}
         }
 	return $i+1;

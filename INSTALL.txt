@@ -20,10 +20,16 @@
 #	0.7	Solved an issue with files with more than 1000 pages
 #	1.0	First release version
 #	1.0.1	Solving error when file has no images
+#       1.0.2   Fix bug when counting cores for AMD processors
+#       1.0.3   Added better image type detection
 #
-#	TODO: 	- Changes get_imgs and OCR processing to enable pages with more than one image -- it
-#		would not work on previous versions that assumed #pages = #imgs. Version 1.1 counts them
-#		diferently but does not treat it adequately
+#       TODO:   - Changes get_imgs and OCR processing to enable pages with more than one image -- it
+#               would not work on previous versions that assumed #pages = #imgs. Version 1.1 counts them
+#               diferently but does not treat it adequately
+#               - Review poppler and cpdf install instructions
+#               - Add better handling of vectorized and non scanned pdf files
+#               - Add option to generate multi-page tiff files to reduce overhead (one for each CPU core)
+#               - Check mean saturation for addiotional colored images detection and automatically convert to B&W if possible
 #
 #	Check software requirements on the comments bellow
 #
