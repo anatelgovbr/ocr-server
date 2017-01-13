@@ -1,6 +1,6 @@
 #! /usr/bin/perl -w
 #
-#	OCR Server 1.0.1 - (c) Agencia Nacional de Telecomunicacoes
+#	OCR Server 1.0.4 - (c) Agencia Nacional de Telecomunicacoes
 #
 #	This script monitors a set of input directories for PDF files
 #	once a new file is detected, it is processes through tesseract OCR
@@ -24,6 +24,7 @@
 #	1.0.1	Solving error when file has no images
 #	1.0.2	Fix bug when counting cores for AMD processors
 #	1.0.3	Added better image type detection	
+#   1.0.4   Fix: added ubuntu init script
 #
 #	TODO: 	- Changes get_imgs and OCR processing to enable pages with more than one image -- it
 #		would not work on previous versions that assumed #pages = #imgs. Version 1.1 counts them

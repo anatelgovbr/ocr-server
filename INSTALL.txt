@@ -1,4 +1,4 @@
-#	OCR Server 1.0.1 - (c) Agencia Nacional de Telecomunicacoees
+#	OCR Server 1.0.4 - (c) Agencia Nacional de Telecomunicacoees
 #
 #	This script monitors a set of input directories for PDF files
 #	once a new file is detected, it is processes through tesseract OCR
@@ -22,6 +22,7 @@
 #	1.0.1	Solving error when file has no images
 #       1.0.2   Fix bug when counting cores for AMD processors
 #       1.0.3   Added better image type detection
+#       1.0.4   Fix: added ubuntu init script
 #
 #       TODO:   - Changes get_imgs and OCR processing to enable pages with more than one image -- it
 #               would not work on previous versions that assumed #pages = #imgs. Version 1.1 counts them
@@ -144,12 +145,13 @@ cd poppler && ./autogen.sh && LIBOPENJPEG_LIBS=-l/usr/local/lib/libopenjp2.so LI
 # Criação do usuário
 adduser ocr
 
-# Copie os arquivos ocr ocr-init* para o /home/ocr e, conforme o sistema operacional
-cp /home/ocr/ocr /usr/local/bin
-cp /home/ocr/ocr-init-rh /etc/init.d/ocr (OU) 
-cp /home/ocr/ocr-init-Ubuntu /etc/init/ocr
+# Copie os arquivos ocr ocr-* para os diretórios corretos, conforme o sistema operacional
+cp ./usr/local/bin/ocr /usr/local/bin
+cp ./usr/local/etc/init.d/ocr-redhat /etc/init.d/ocr (OU) 
+cp ./usr/local/etc/init.d/ocr-ubuntu /etc/init.d/ocr
 
 # Auto start (RedHat 6.7)
+mv /etc
 chkconfig --add ocr
 chkconfig --level 2345 ocr on
 
