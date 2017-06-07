@@ -84,8 +84,10 @@ my $CONVERT = '/usr/bin/convert';
 # If it is needed further filtering
 #my $FILTER = '/usr/local/bin/textcleaner -g -e stretch -f 25 -o 10 -u -s 1 -T -p 10 ';
 
-my @BASE_DIRS = (	'/mnt/protocolo_sede/DIGITALIZAÇÃO/ARQUIVOS PROTOCOLO/OCR/',
-			'/mnt/protocolo_sede/DIGITALIZAÇÃO/ARQUIVOS_PROCESSOS/OCR/' );
+#my @BASE_DIRS = (	'/mnt/protocolo_sede/DIGITALIZAÇÃO/ARQUIVOS PROTOCOLO/OCR/',
+#			'/mnt/protocolo_sede/DIGITALIZAÇÃO/ARQUIVOS_PROCESSOS/OCR/' );
+
+my @BASE_DIRS = ('/var/ocr-server/');
 
 my %SUB_DIRS = ( 'IN'=>'Entrada', 'OUT'=>'Saida', 'PROC'=>'Originais_Processados', 'TEMP'=>'/tmp/ocr_tmp', 'ERROR' => 'Erro' );
 
