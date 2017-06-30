@@ -1,6 +1,6 @@
-#! /usr/bin/perl -w
+#!/usr/bin/perl -w
 #
-#	OCR Server 1.0.4 - (c) Agencia Nacional de Telecomunicacoes
+#	OCR Server 2.0 - (c) Agencia Nacional de Telecomunicacoes
 #
 #	This script monitors a set of input directories for PDF files
 #	once a new file is detected, it is processes through tesseract OCR
@@ -24,15 +24,38 @@
 #	1.0.1	Solving error when file has no images
 #	1.0.2	Fix bug when counting cores for AMD processors
 #	1.0.3	Added better image type detection	
-#   1.0.4   Fix: added ubuntu init script
+#       1.0.4   Fix: added ubuntu init script
+#	1.0.4b	Add Centos 6.9 install instructions
+#	2.0	PDF/A output, and better compression with ghostscript --> for this to work, Tesseract 4.0 is 
+#		strongly recomended
+#		Rewritten image extration, processing and transformations process
+#		Check if input file is signed, in this case, does not change the file contents
+#		Added '-oem 0' option to tesseract (force legacy mode on tesseract 4)
+#		Use operating system packges by default
+#		Changed paths from external programs, instead of using full paths, uses first match from $PATH
+#		Check existence of external programs on path before running
+#		Add support for stencil type and image encoding scans, changed default extraction method for unknown types/encodings
+#		Fix: create subpaths on error folder
+#		Fix: trying to reduce overhead on temporary folder
 #
 #	TODO: 	- Changes get_imgs and OCR processing to enable pages with more than one image -- it
-#		would not work on previous versions that assumed #pages = #imgs. Version 1.1 counts them
-#		diferently but does not treat it adequately
+#		would not work on previous versions that assumed #pages = #imgs. Version 1.0.1 counts them
+#		diferently but does not treat it adequately -- shall require better pdf´s internal structure handling
 #		- Review poppler and cpdf install instructions
 #		- Add better handling of vectorized and non scanned pdf files
-#		- Add option to generate multi-page tiff files to reduce overhead (one for each CPU core)
-#		- Check mean saturation for addiotional colored images detection and automatically convert to B&W if possible
+#		- Add option to generate multi-page tiff files to reduce overhead (one for each CPU core) -- harder with current 
+#		scalling, cropping and rotation handlers
+#		- Check mean saturation for additional colored images detection and automatically convert to B&W if possible -- 
+#		added function to analyse image color histogram -> just need to add option to convert it to B&W.
+#		- Move all parameters to config file
+#		- Add some job control web interface
+#		- Add end user interface to submit files through web
+#		- Add check external programs version requirements before running
+#
+#	BUGS:	- When image is of type stencil or encoding image, cropping information is lost, and page is shown different than
+#		original, this is due to using pdftoppm instead of pdfimages 
+#		- Although not properly a BUG, in the new version, the addition of a step do convert do PDF/A and other evolutions
+#		increased significantly the time do OCR a page, from a mean time of 1 secs/page to 3 secs/page on a 16 core server
 #
 #	Check software requirements on the comments bellow
 #
@@ -54,8 +77,8 @@ use Sys::Hostname;
 use IPC::Open3;
 use IO::Select;
 
-my $DEBUG = 0;
-my $MAX_PGS = ($DEBUG==2 ? 1 : `cat /proc/cpuinfo  | grep -e '^processor' | wc -l`);
+my $DEBUG = 2;
+my $MAX_PGS = ($DEBUG==2 ? 1 : 0 + `cat /proc/cpuinfo  | grep -e '^processor' | wc -l`);
 my $MAX_FILES = ( !$DEBUG ? 2 : 1) ;
 
 my $USER = 'ocr';
@@ -63,23 +86,28 @@ my $CHECK_COLOR = 0; # If it has to check if image is reaaly colored or if it ca
 
 # Command dependencies
 
-# depends on tesseract-ocr an tesseract-ocr-por 3.05-dev or higher
-my $TESSERACT = '/usr/local/bin/tesseract -l por+eng';
+# depends on tesseract-ocr an tesseract-ocr-por 3.05-dev or higher -- for pdf/a Tesseract 4.0 is recomended
+my $TESSERACT = 'tesseract --oem 0'; 		# if Tesseract => 4.0
+#my $TESSERACT = 'tesseract';			# if Tesseract < 4.0
 
 # Depends on pdftk 2.02 or higher
-my $PDFTK = '/usr/local/bin/pdftk';
+my $PDFTK = 'pdftk';
 
 # Depends on poppler-utils 0.42.0 or higher
-#my $PDINFO = '/usr/local/bin/pdfinfo';
-my $PDFFONTS = '/usr/local/bin/pdffonts';
-my $PDFIMAGES = '/usr/local/bin/pdfimages';
-my $PDFTOPPM = '/usr/local/bin/pdftoppm';
+my $PDFFONTS = 'pdffonts';
+my $PDFIMAGES = 'pdfimages';
+my $PDFTOPPM = 'pdftoppm';
+my $PDFUNITE = 'pdfunite';
+my $PDFSIG = 'pdfsig';
 
 # Depends on cpdf 2.1 or higher
-my $CPDF = '/usr/local/bin/cpdf';
+my $CPDF = 'cpdf';
+
+# Depends on Ghostscript 9.18
+my $GS = 'gs';
 
 ## Depends on ImageMagick and http://www.fmwconcepts.com/imagemagick/downloadcounter.php?scriptname=textcleaner&dirname=textcleaner
-my $CONVERT = '/usr/bin/convert';
+my $CONVERT = 'convert';
 
 # If it is needed further filtering
 #my $FILTER = '/usr/local/bin/textcleaner -g -e stretch -f 25 -o 10 -u -s 1 -T -p 10 ';
@@ -90,12 +118,14 @@ my @BASE_DIRS = (	'/mnt/protocolo_sede/DIGITALIZAÇÃO/ARQUIVOS PROTOCOLO/OCR/',
 my %SUB_DIRS = ( 'IN'=>'Entrada', 'OUT'=>'Saida', 'PROC'=>'Originais_Processados', 'TEMP'=>'/tmp/ocr_tmp', 'ERROR' => 'Erro' );
 
 @BASE_DIRS = ( '/tmp/ocr_dev/') if ($DEBUG==2);
-%SUB_DIRS = ( 'IN'=>'Entrada', 'OUT'=>'Saida', 'PROC'=>'Originais_Processados', 'TEMP'=>'/tmp/ocr_dev/tmp', 'ERROR' => 'Erro' ) if ($DEBUG);
+%SUB_DIRS = ( 'IN'=>'Entrada', 'OUT'=>'Saida', 'PROC'=>'Originais_Processados', 'TEMP'=>'/tmp/ocr_dev/tmp', 'ERROR' => 'Erro' ) if ($DEBUG==2);
 
 # Safeguard im case of cpuinfo has not identified correctly the number of CPUs 
 $MAX_PGS = ($MAX_PGS==0) ? 4 : $MAX_PGS;
 
-$ENV{'PATH'} = '/usr/local/bin:/bin:/usr/bin';
+$ENV{'PATH'} = '/usr/local/bin:/usr/bin:/bin';
+$ENV{'IFS'} = '\t\n';
+
 my ($host) = split/\./,hostname;
 
 use vars qw/*name *dir *prune/;
@@ -107,14 +137,15 @@ sub main;
 sub get_pages;
 sub get_rotation;
 sub get_res;
-sub is_ocred;
 sub is_locked_ex;
 
 
 my $expr = 'use POSIX qw(setsid)';
 
 my ($dumb1, $dumb2, $uid) = getpwnam ($USER);
-setuid ($uid) or warn "Cant set uid $uid";
+if (defined $uid) {
+	setuid ($uid) or warn "Cant set uid $uid";
+}
 
 $SIG{__DIE__}  = 'DEFAULT';
 $SIG{__WARN__} = \&die_when_called;
@@ -126,6 +157,11 @@ if ($@) {
 chdir('/') or die "$0: cannot chdir '/': $!\n";
 open(STDIN, '/dev/null') or die "$0: cannot open '/dev/null': $!\n";
 
+foreach my $exec ( $TESSERACT, $PDFTK, $PDFFONTS, $PDFIMAGES, $PDFSIG, $CPDF, $GS, $CONVERT) {
+	die "Error: $exec not found on path: $ENV{PATH}, check dependencies\n" if ( `which $exec | wc -l ` == 0);
+}
+
+
 foreach my $DIR (@BASE_DIRS) {
 
     defined(my $pid = fork) or die "$0: cannot fork: $!\n";
@@ -135,7 +171,7 @@ foreach my $DIR (@BASE_DIRS) {
 	main ($DIR, $DIR.$SUB_DIRS{IN}, $DIR.$SUB_DIRS{OUT}, $DIR.$SUB_DIRS{PROC}, $SUB_DIRS{TEMP}, $DIR.$SUB_DIRS{ERROR}); 
 	exit 0;
 	last;
-    } 
+    }
 }
 
 exit 0;
@@ -157,7 +193,7 @@ sub main {
 	#  remove .tmp file
 	unlink ( find ( file => name =>  qr/\.${host}\.tmp$/i , in => ${IN} ) );
 
-	# Rename files that were in 'processig' back
+	# Rename files that were in 'processing' state back
 	foreach my $file ( find ( file => name =>  qr/\.${host}\.processing$/i , in => ${IN} ) ) {
 		my $old_name = $file;
 		$old_name =~ s/\.${host}\.processing$//g;
@@ -177,12 +213,14 @@ sub main {
 	# Main loop
 	while ( 1 ) {	
 		select (undef, undef, undef, rand 3); 	# Random sleep so multiple instances dont get synced
+
 		$files_in {$_} = (!defined $files_in {$_} ? 1 : $files_in {$_}) for ( find ( file => name =>  qr/\.pdf$/i , in => ${IN} ));
 		print "\nFound ", scalar keys %files_in, " in $IN\n" if $DEBUG && $count != scalar keys %files_in;
 		$count = scalar keys %files_in;
-		foreach my $file (keys %files_in) {
 
-			next if ( glob ("$file.*.tmp")); 		
+		foreach my $file (sort { ((-f $a) ? (stat $a)[9] : 0) <=> ((-f $b) ? (stat $b)[9] : 0)} keys %files_in ) {
+
+			next if ( glob ("\"$file.*.tmp\"")); 		
 
 			select (undef, undef, undef, 1 + rand 2);	# sleep between 1 and 3 seconds
 			next if (!defined $files_in{$file});	# continue only if it is still valid
@@ -255,7 +293,7 @@ sub ocr {
 		remove_tree ($tmpdir,{ error=> \my $dumb });
 		unlink ("$in_file.$host.tmp");
 		move ( "$in_file.$host.processing", $in_file);
-		exit 0;
+		exit 1;
 	}; 
 
 	my $out_path = $in_path;
@@ -271,7 +309,7 @@ sub ocr {
 	my $error_file = $error_path.$in_name.($in_suffix ne ""? ".".$in_suffix: "");
 
 	print "\twritting to $out_file\n" if $DEBUG;
-				
+	
 	my $stime = time;
 	my %pids;
 
@@ -291,7 +329,25 @@ sub ocr {
 		remove_tree ($tmpdir,{ error=> \my $dumb });
 		unlink ("$in_file.$host.tmp");
                 move ( "$in_file.$host.processing", $in_file);
+		print "Error: cannot copy $in_file to temp dir \n" if $DEBUG;
+		syslog ("error","cannot copy $in_file to temp dir") if !$DEBUG;
+		exit 1;
 	};
+
+	# Check if file was signed
+	if (get_sign($tmp_file)) {
+		if (!copy ("$in_file.$host.processing", $proc_file)) {
+	                remove_tree ($tmpdir,{ error=> \my $dumb });
+        	        unlink ("$in_file.$host.tmp");
+	                move ( "$in_file.$host.processing", $in_file);
+        	};
+		move ("$in_file.$host.processing", $out_file);
+       	        unlink ("$in_file.$host.tmp");
+		print "OCR processed: $in_file not OCRed due to having a signature within" if $DEBUG;
+		syslog ("info","OCR processed: $in_file not OCRed due to having a signature within") if !$DEBUG;
+
+		exit 0;
+	}
 
 	# Extract pages
 	($exit, $cmd, @out,@err) = exec_cmd ("${PDFTK} \"${tmp_file}\" burst output \"${tmpdir}\"/pg_\%06d.pdf");
@@ -301,12 +357,13 @@ sub ocr {
                 print "\t\t\t$_" for @err ;
         };
 
+	my ($pages, @pg_w, @pg_h, @pg_r,  @pg_crop_x1, @pg_crop_y1, @pg_crop_x2, @pg_crop_y2);
+	$pages = get_pages ($tmp_file, \@pg_w, \@pg_h, \@pg_r, \@pg_crop_x1, \@pg_crop_y1, \@pg_crop_x2, \@pg_crop_y2);
 
-	my ($pages, @pg_w, @pg_h, @pg_r);
-	$pages = get_pages ($tmp_file, \@pg_w, \@pg_h, \@pg_r);
+	my ($imgs,@page_img,  @img_w, @img_h, @img_t, @img_xppi, @img_yppi);
+	$imgs = get_imgs ( $tmp_file, \@page_img, \@img_w, \@img_h, \@img_t, \@img_xppi, \@img_yppi);
 
-	my ($imgs,@page_img,  @img_w, @img_h, @img_t);
-	$imgs = get_imgs ( $tmp_file, \@page_img, \@img_w, \@img_h, \@img_t);
+	unlink ($tmp_file) if (!$DEBUG);
 
 	for ( my $i=0; $i< $pages; $i++ ) {
 		my $pg = sprintf ("pg_%06d", $i+1);
@@ -333,25 +390,29 @@ sub ocr {
 			if (! defined $img_t[$i] ) {
 				move ("${tmpdir}/${pg}.pdf","${tmpdir}/${pg}-cpdf.pdf");
 				print "\t\t${in_file}: ".(${i}+1)." / $pages: Undefined image type on page, ignoring page\n" if $DEBUG;
-				exit 0;
+				exit -1;
 			}
 
-			print "\t\t${in_file}: ".(${i}+1)." / $pages:  $pg_w[$i] x $pg_h[$i] - $pg_r[$i] & $img_w[$i] x $img_h[$i], $img_t[$i]\n" if $DEBUG;
+			print "\t\t${in_file}: ".(${i}+1)." / $pages:  $pg_w[$i] x $pg_h[$i] - $pg_r[$i] & $img_w[$i] x $img_h[$i], $img_t[$i] " if $DEBUG;
+			print "(cropbox: $pg_crop_x1[$i] x $pg_crop_y1[$i] - $pg_crop_x2[$i] x $pg_crop_y2[$i])\n" if (defined $pg_crop_x1[$i] && $DEBUG);
+			print "\n" if ($DEBUG);
 
+			# Extract images from page, since 2.0 uses png lossless format regardless of original format or depth
 			undef $cmd;
+
+			# Use PDFIMAGES and JPEG by default
+			$cmd = "${PDFIMAGES} -j \"${tmpdir}\"/${pg}.pdf \"${tmpdir}\"/${pg}";
+
+			if ($img_t[$i] eq "stencil") {
+				$cmd = "${PDFTOPPM} -tiff -tiffcompression deflate -scale-to-x $img_w[$i] -scale-to-y $img_h[$i]  \"${tmpdir}\"/${pg}.pdf \"${tmpdir}\"/${pg}";
+			}
 
 			if ($img_t[$i] eq "gray") {
 				$cmd = "${PDFIMAGES} -tiff \"${tmpdir}\"/${pg}.pdf \"${tmpdir}\"/${pg}";
 			}
 
-			if ($img_t[$i] eq "rgb") {
-				$cmd = "${PDFTOPPM} -jpeg -scale-to-x $img_w[$i] -scale-to-y $img_h[$i]  \"${tmpdir}\"/${pg}.pdf \"${tmpdir}\"/${pg}";
-				$pg_r[$i] = 0; # Do not rotate if it was extracted with PDFTOPPM
-			}
-
-			if (!defined $cmd) {
-				$cmd = "${PDFTOPPM} -jpeg -scale-to-x $img_w[$i] -scale-to-y $img_h[$i]  \"${tmpdir}\"/${pg}.pdf \"${tmpdir}\"/${pg}";
-				$pg_r[$i] = 0; # Do not rotate if it was extracted with PDFTOPPM
+			if ($img_t[$i] !~ /gray|rgb|stencil/) {
+				$cmd = "${PDFTOPPM} -jpeg -scale-to-x $img_w[$i] -scale-to-y $img_h[$i] \"${tmpdir}\"/${pg}.pdf \"${tmpdir}\"/${pg}";
 			}
 		
 			($exit,$cmd,@out,@err) = exec_cmd($cmd);
@@ -362,7 +423,13 @@ sub ocr {
                         };
 
 			# Process each resulting image for page pdf
-			my @images = ( find ( file => name =>  qr/${pg}.*\.(jpg|tif)/i , in => ${tmpdir} )) ;
+			my @images = ( find ( file => name =>  qr/${pg}.*\.(jpg|tif|tiff|jpeg|jp2|jb2|png)/i , in => ${tmpdir} )) ;
+
+			if (scalar @images == 0)  {
+				move ("${tmpdir}/${pg}.pdf","${tmpdir}/${pg}-cpdf.pdf");
+				print "\t\t${in_file}: ".(${i}+1)." / $pages: Page was not exported as a tesseract supported format -- not OCRing\n" if $DEBUG;
+				exit 0;
+			}
 
 			foreach my $image (@images) { 
 				print "\t\t\t${image}: ".(${i}+1)." / $pages\n" if $DEBUG;
@@ -378,11 +445,56 @@ sub ocr {
 						print "\t\t\t\tImage is probably " . ( $out[0]<0.1 ? "B&W" : "Colored") . " (mean saturation: $out[0])\n";
 					}
 				}
+
+				# Check if page was rotated and extracted with pdftoppm
+				if ($cmd =~ /\Q$PDFTOPPM/ && $pg_r[$i]) {
+					print "\t\t\t${image} unrotate: -$pg_r[$i] degs ".(${i}+1)." / $pages\n" if $DEBUG;
+					($exit,$cmd,@out,@err) = exec_cmd("${CONVERT} \"$image\" -rotate ". (360 - $pg_r[$i])." \"$image\"");
+					if ($DEBUG) { 
+						print "\t\t\t${image} -> $cmd: $exit\n";
+						print "\t\t\t\t$_" for @out ;
+						print "\t\t\t\t$_" for @err ;
+					};
+				}
 	
-				# Check if page was rotated
+				# Filter ppm images, if needed
+
+				# OCR ppm images to pdf pages
+				($exit,$cmd, @out,@err) = exec_cmd("${TESSERACT} -l por+eng \"${image}\" \"${image}\" pdf");
+				if ($DEBUG) { 
+					print "\t\t\t${image} -> $cmd: $exit\n";
+					print "\t\t\t\t$_" for @out ;
+					print "\t\t\t\t$_" for @err ;
+				};
+				unlink ("$image") if (!$DEBUG);
+
+				# Scale, crop and rotate to fit pdf
+				($exit,$cmd, @out,@err) = exec_cmd("${CPDF} -scale-to-fit \"$pg_w[$i] $pg_h[$i]\"  \"${image}\".pdf -o \"${image}\"-cpdf.pdf");
+				if ($DEBUG) { 
+					print "\t\t\t${image} -> $cmd: $exit\n";
+					print "\t\t\t\t$_" for @out ;
+					print "\t\t\t\t$_" for @err ;
+				};
+				unlink ("$image.pdf") if (!$DEBUG);
+
+				if (defined $pg_crop_x1[$i]) {
+					# adjust cropbox
+					($pg_crop_x1[$i], $pg_crop_y1[$i],$pg_crop_x2[$i],$pg_crop_y2[$i]) = (
+						($pg_crop_x1[$i]<$pg_crop_x2[$i]?$pg_crop_x1[$i]:$pg_crop_x2[$i]),
+						($pg_crop_y1[$i]<$pg_crop_y2[$i]?$pg_crop_y1[$i]:$pg_crop_y2[$i]),
+						abs($pg_crop_x2[$i]-$pg_crop_x1[$i]),abs($pg_crop_y2[$i]- $pg_crop_y1[$i])
+					);
+
+					($exit,$cmd, @out,@err) = exec_cmd("${CPDF} -crop \"$pg_crop_x1[$i] $pg_crop_y1[$i] $pg_crop_x2[$i] $pg_crop_y2[$i]\" \"${image}\"-cpdf.pdf -o \"${image}\"-cpdf.pdf");
+					if ($DEBUG) {
+                                        	print "\t\t\t${image} -> $cmd: $exit\n";
+	                                        print "\t\t\t\t$_" for @out ;
+	                                        print "\t\t\t\t$_" for @err ;
+        	                        };
+				}
+
 				if ($pg_r[$i]) {
-					print "\t\t\t${image} unrotate: $pg_r[$i] graus ".(${i}+1)." / $pages\n" if $DEBUG;
-					($exit,$cmd,@out,@err) = exec_cmd("${CONVERT} \"$image\" -rotate $pg_r[$i] \"$image\"");
+					($exit,$cmd, @out,@err) = exec_cmd( "${CPDF} -rotate $pg_r[$i] \"${image}\"-cpdf.pdf -o \"${image}\"-cpdf.pdf");
 					if ($DEBUG) { 
 						print "\t\t\t${image} -> $cmd: $exit\n";
 						print "\t\t\t\t$_" for @out ;
@@ -390,31 +502,8 @@ sub ocr {
 					};
 				}
 
-				# Filter ppm images, if needed
-
-				# OCR ppm images to pdf pages
-				($exit,$cmd, @out,@err) = exec_cmd("${TESSERACT} \"${image}\" \"${image}\" pdf");
-				if ($DEBUG) { 
-					print "\t\t\t${image} -> $cmd: $exit\n";
-					print "\t\t\t\t$_" for @out ;
-					print "\t\t\t\t$_" for @err ;
-				};
-
-				# Scale to fit pdf
-				($exit,$cmd, @out,@err) = exec_cmd("${CPDF} -scale-to-fit \"$pg_w[$i] $pg_h[$i]\" \"${image}\".pdf -o \"${image}\"-cpdf.pdf");
-				if ($DEBUG) { 
-					print "\t\t\t${image} -> $cmd: $exit\n";
-					print "\t\t\t\t$_" for @out ;
-					print "\t\t\t\t$_" for @err ;
-				};
-
-
-				unlink ("${tmpdir}/${pg}.pdf") if (!$DEBUG);
-				unlink ("$image.pdf") if (!$DEBUG);
-				move ("${tmpdir}/${pg}.pdf","${tmpdir}/${pg}.pdf.old") if ($DEBUG);
-				unlink ("$image") if (!$DEBUG);
 			}
-			exit 0;
+			exit 1;
 		}
 	}
 
@@ -427,27 +516,50 @@ sub ocr {
 
 	if (scalar @new_pages != $pages) {
 		print "\t\t${out_file} -> Number of output pages differ (Orig.: $pages x New: ".scalar @new_pages."): $exit\n" if ($DEBUG);
-		syslog ("info","OCR: $in_file, number of output pages differ") if (!$DEBUG);
+		syslog ("err","OCR: $in_file, number of output pages differ") if (!$DEBUG);
 		unlink "$in_file.$host.tmp";
+		make_path ($error_path) if ( ! -d $error_path);
 		move ("$in_file.$host.processing", $error_file);
-		exit (0);
+		exit (1);
 	}
 
-	# Merge resulting pdf pages to a single pdf
+	# Merge resulting pdf pages to a single pdf, convert to PDF/A and copy to output
 	make_path ($out_path) if ( ! -d $out_path);
 	unlink $out_file if ( -f $out_file );
-	($exit, $cmd, @out,@err) = exec_cmd("${PDFTK} \"${tmpdir}\"/pg_*-cpdf.pdf cat output \"${out_file}.tmp\" compress");
+
+	chdir (${tmpdir});
+	($exit, $cmd, @out,@err) = exec_cmd("${GS} -dQUIET -dBATCH -dNOPAUSE -dNOINTERPOLATE -dCompatibilityLevel=1.7 -dNumRenderingThreads=${MAX_PGS} -sDEVICE=pdfwrite -dAutoRotatePages=/None -sColorConversionStrategy=/RGB -sProcessColorModel=DeviceRGB -dAutoFilterColorImages=true -dAutoFilterGrayImages=true -dJPEGQ=95 -dPDFA=2 -dPDFACompatibilityPolicy=1 -sOutputFile=\"${tmp_file}\"  pg_*-cpdf.pdf ");
 	if ($DEBUG) {
 		print "\t\t${out_file} -> $cmd: $exit\n";
 	        print "\t\t\t$_" for @out ;
         	print "\t\t\t$_" for @err ;
 	};
+	if ($exit) {
+		unlink "$in_file.$host.tmp";
+		unlink $out_file;
+		make_path ($error_path) if ( ! -d $error_path);
+                move ("$in_file.$host.processing", $error_file);
+		print "\t\t${out_file} -> Error concatenating pages and converting to PDF/A (Orig.: $pages x New: ".scalar @new_pages."): $exit\n" if ($DEBUG);
+                syslog ("err","OCR: $in_file, error concatenating pages and converting to PDF/A") if (!$DEBUG);
+                exit (1);
+        }
+	chdir ("/"); 
+
+	if (!copy (${tmp_file}, $out_file)) {
+                remove_tree ($tmpdir,{ error=> \my $dumb });
+                unlink ("$in_file.$host.tmp");
+		unlink $out_file;
+		make_path ($error_path) if ( ! -d $error_path);
+                move ("$in_file.$host.processing", $error_file);
+		print "Error: cannot copy temp file to $out_file \n" if $DEBUG;
+		syslog ("error","cannot copy temp file to $out_file") if !$DEBUG;
+		exit 1;
+        };
 
 	make_path ($proc_path) if ( ! -d $proc_path);
 	unlink $proc_file if ( -f $proc_file );
 	move ("$in_file.$host.processing", $proc_file);
 	move ("${out_file}.tmp", ${out_file});
-
 
 	# Remove temp dir
 	remove_tree ($tmpdir,{ error=> \my $dumb }) if (!$DEBUG);
@@ -471,7 +583,7 @@ sub is_ocred {
 }	
 
 sub get_pages {
-	my ($in_file, $w, $h, $r) = @_;
+	my ($in_file, $w, $h, $r, $x1, $y1, $x2, $y2) = @_;
 
 	my $pages=0;
 	my $i=0;
@@ -485,29 +597,35 @@ sub get_pages {
 		($dumb, $pages) = split / {1,}/  if ( $_ =~ /NumberOfPages:/ );
 		($dumb, $i )    = split / {1,}/  if ( $_ =~ /PageMediaNumber:/ );
 		($dumb, @$r[$i-1]) = split / {1,}/  if ( $_ =~ /PageMediaRotation:/ );
-		($dumb, @$w[$i-1], @$h[$i-1]) = split / {1,}/  if ( $_ =~ /PageMediaDimensions:/ );
+		($dumb, @$w[$i-1], @$h[$i-1]) = split / {1,}/ if ( $_ =~ /PageMediaDimensions:/ );
+		($dumb, @$x1[$i-1], @$y1[$i-1], @$x2[$i-1], @$y2[$i-1]) = split / {1,}/ if ( $_ =~ /PageMediaCropRect:/ );
 	}
 
 	return $pages;
 }
 
 sub get_imgs {
-	my ($in_file, $page_img, $w, $h, $t) = @_;
-        my ($dumb, $i, $page, $type, $width, $height, $color, $comp, $bpc, $enc);
+	my ($in_file, $page_img, $w, $h, $t, $x_ppi, $y_ppi) = @_;
+        my ($dumb, $i, $page, $type, $width, $height, $color, $comp, $bpc, $enc, $int, $obj, $id, $xppi, $yppi );
 
 	my ($exit, $cmd, @lines, @err) = exec_cmd("${PDFIMAGES} -list \"${in_file}\"");
+	$i = 0;
 
 	foreach my $line (@lines)  {
                 chomp $line;
 		$line =~ s/^ {1,}//;
-		if ( $line =~  /image|mask/ ) {
-			($page, $i , $type, $width, $height, $color, $comp, $bpc, $enc) = split / {1,}/,$line;
+		if ( $line !~  /^page|^----/ ) {
+			($page, $i , $type, $width, $height, $color, $comp, $bpc, $enc, $int, $obj, $id, $xppi, $yppi) = split / {1,}/,$line;
 			@$page_img[$page-1]=$i;
 			@$w[$page-1] = $width;
 			@$h[$page-1] = $height;
 			@$t[$page-1] = "rgb"; 	# Default is color
-			@$t[$page-1] = ( $comp == 3 || $bpc >  1 || $enc   eq "jpeg" || $color eq "-"    || $color eq "icc"  ? "rgb"  : @$t[$page-1]); 
 			@$t[$page-1] = ( $comp == 1 || $bpc == 1 || $enc   eq "ccitt"|| $color eq "gray" ||  $type eq "mask" ? "gray" : @$t[$page-1]); 
+			@$t[$page-1] = ( $comp == 3 || $bpc >  1 || $enc   eq "jpeg" || $color eq "-"    || $color eq "icc"  ? "rgb"  : @$t[$page-1]); 
+			@$t[$page-1] = ( $type eq "stencil" ? $type :  @$t[$page-1]);
+			@$t[$page-1] = ( $enc  eq "image"   ? $enc  :  @$t[$page-1]);
+			@$x_ppi[$page-1] = $xppi;
+			@$y_ppi[$page-1] = $yppi;
 		}
         }
 	return $i+1;
@@ -540,6 +658,19 @@ sub get_res {
 		$res_y=sprintf ("%.f", $res_y);
 	}
 	return ($res_x,$res_y);
+}
+
+sub get_sign {
+        my ($in_file) = @_;
+        my @lines = `${PDFSIG} \"${in_file}\"  2>/dev/null`;
+
+        foreach (@lines)  {
+                chomp;
+                if ( $_ =~ /^Signature/ ) {
+			return 1;
+		}
+        }
+        return 0;
 }
 
 sub is_locked_ex {
