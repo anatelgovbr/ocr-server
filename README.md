@@ -39,24 +39,22 @@ Author: Guilherme Chehab
 	- Add support for stencil type and image encoding scans, changed default extraction method for unknown types/encodings
 	- Fix: create subpaths on error folder
 	- Fix: trying to reduce overhead on temporary folder
-	- TODO:
-		- Changes get_imgs and OCR processing to enable pages with more than one image -- it would not work on previous versions that assumed #pages = #imgs. Version 1.0.1 counts them diferently but does not treat it adequately -- shall require better pdf´s internal structure handling
-		- Review poppler and cpdf install instructions
-		- Add better handling of vectorized and non scanned pdf files
-		- Add option to generate multi-page tiff files to reduce overhead (one for each CPU core) -- harder with current scalling, cropping and rotation handlers
-		- Check mean saturation for additional colored images detection and automatically convert to B&W if possible -- added function to analyse image color histogram -> just need to add option to convert it to B&W.
-		- Move all parameters to config file
-		- Add some job control web interface
-		- Add end user interface to submit files through web
-		- Add check external programs version requirements before running
-	- BUGS:
-		- When image is of type stencil or encoding image, cropping information is lost, and page is shown different than original, this is due to using pdftoppm instead of pdfimages
-
-##	Check software requirements on the comments bellow
-
-To configure input dirs change @BASE_DIRS and @SUB_DIRS variables
-
-### O servidor OCR depende dos seguintes componentes:
+	 
+##	TODO:
+ - Changes get_imgs and OCR processing to enable pages with more than one image -- it would not work on previous versions that assumed #pages = #imgs. Version 1.0.1 counts them diferently but does not treat it adequately -- shall require better pdf´s internal structure handling
+ - Review poppler and cpdf install instructions
+ - Add better handling of vectorized and non scanned pdf files
+ - Add option to generate multi-page tiff files to reduce overhead (one for each CPU core) -- harder with current scalling, cropping and rotation handlers
+ - Check mean saturation for additional colored images detection and automatically convert to B&W if possible -- added function to analyse image color histogram -> just need to add option to convert it to B&W.
+ - Move all parameters to config file
+ - Add some job control web interface
+ - Add end user interface to submit files through web
+ - Add check external programs version requirements before running
+  
+##	BUGS:
+ - When image is of type stencil or encoding image, cropping information is lost, and page is shown different than original, this is due to using pdftoppm instead of pdfimages
+ 
+##	Requirements: 
  - Perl 5.10.1, com seguintes módulos:
 	- File::Find::Rule
 	- File::Basename
@@ -74,7 +72,7 @@ To configure input dirs change @BASE_DIRS and @SUB_DIRS variables
  - Cpdf 2.1
  - ImageMagick 6.7.2-7
  - Ghostcript 9.18
-	
+
 Na ausência deles na distribuição do sistema operacional, o uso de versões antigas desses componentes podem comprometer o correto funcionamento do sistema
 
 Dessa forma, pode ser necessário compilar os componentes faltantes, assim como as bibliotecas necessárias para o seu correto funcionamento.
@@ -107,7 +105,7 @@ Quanto ao CPDF, é possível baixar a versão binária em: https://github.com/co
 
 ## Compilando os pré-requisitos: máquina de COMPILAÇÃO APENAS 
 
-### RedHat 6.7 e Centos 6.9:
+    # RedHat 6.7 e Centos 6.9:
 	yum -y install autoconf make gcc-java gcc gcc-c++ subversion pkg-config automake libtool yasm cmake git libgcj unzip
 	yum -y install libtiff-devel libpng-devel openjpeg-devel libjpeg-turbo-devel giflib-devel libwebp-devel zlib-devel libicu-devel pango-devel cairo-devel fontconfig-devel gettext-devel libcurl-devel nss-devel
 	cd /tmp
@@ -115,21 +113,21 @@ Quanto ao CPDF, é possível baixar a versão binária em: https://github.com/co
 	rpm -Uvh msttcore-fonts-2.0-3.noarch.rpm
 	rm -f msttcore-fonts-2.0-3.noarch.rpm
 
-### Centos 6.9
-#   \_ autoconf-archive
+    # Centos 6.9
+    #   \_ autoconf-archive
 	wget ftp://ftp.pbone.net/mirror/ftp5.gwdg.de/pub/opensuse/repositories/home:/pelliott11:/autoconf-archive/CentOS_CentOS-6/noarch/autoconf-archive-2012.04.07-7.3.noarch.rpm
 	rpm -i autoconf-archive-2012.04.07-7.3.noarch.rpm
 	rm autoconf-archive-2012.04.07-7.3.noarch.rpm
-#   \_ GCC 4.8
+    #   \_ GCC 4.8
 	wget http://people.centos.org/tru/devtools-2/devtools-2.repo -O /etc/yum.repos.d/devtools-2.repo
 	yum install devtoolset-2-gcc devtoolset-2-binutils devtoolset-2-gcc-c++ devtoolset-2-gcj
 
-# Ubuntu 14.04 Server:
+    # Ubuntu 14.04 Server:
 	apt-get install build-essential cmake libtool yasm pkg-config subversion git libgcj14 
 	apt-get install libtiff-dev libpng-dev libopenjpeg-dev libjpeg8-dev libjpeg-turbo8-dev libjpeg-dev libgif-dev zlib1g-dev libicu-dev libpango1.0-dev libcairo2-dev libfontconfig1-dev libgettextpo-dev libcurl-dev  libnss3-dev
 	apt-get install ttf-mscorefonts-installer
 
-# Ambas plataformas:
+    # Ambas plataformas:
 	cd /usr/local/src
 
 	for i in \
@@ -152,89 +150,92 @@ Quanto ao CPDF, é possível baixar a versão binária em: https://github.com/co
 	unzip pdftk-2.02-src.zip
 	rm -f pdftk-2.02-src.zip
 
-# pdftk, versão 2.02 ou superior
-cd pdftk-2.02-dist/pdftk && make -f Makefile.Redhat all install && cd ../..
+    # pdftk, versão 2.02 ou superior
+    cd pdftk-2.02-dist/pdftk && make -f Makefile.Redhat all install && cd ../..
 
-# Ghostscript 9.18 ou superior
-#wget http://downloads.ghostscript.com/public/old-gs-releases/ghostscript-9.18.tar.gz
-#tar xvozf ghostscript-9.21.tar.gz
-#rm -f ghostscript-9.21.tar.gz
-#cd ghostscript-9.21
-cd ghostpdl
-./autogen.sh; ./configure
-make all install
-cd ..
+    # Ghostscript 9.18 ou superior
+    #wget http://downloads.ghostscript.com/public/old-gs-releases/ghostscript-9.21.tar.gz
+    #tar xvozf ghostscript-9.21.tar.gz
+    #rm -f ghostscript-9.21.tar.gz
+    #cd ghostscript-9.21
+    cd ghostpdl
+    ./autogen.sh; ./configure
+    make all install
+    cd ..
 
-# Centos 6.9
-#   \_ Cria um novo shell usando o GCC 4.8 por default
-scl enable devtoolset-2 bash  
+    # Centos 6.9
+    #   \_ Cria um novo shell usando o GCC 4.8 por default
+    scl enable devtoolset-2 bash  
 
-# Tesseract, versão 3.05-dev ou superior
-# Bibliotecas para o Tesseract: Leptonica e Libav
-cd leptonica && ./autobuild && ./configure && make all install && cd ..
+    # Tesseract, versão 3.05-dev ou superior
+    # Bibliotecas para o Tesseract: Leptonica e Libav
+    cd leptonica && ./autobuild && ./configure && make all install && cd ..
 
-# Para compilação do Tesseract após a compilação do leptonica
-export PKG_CONFIG_PATH=/usr/lib:/usr/local/lib:/usr/local/src/leptonica/
+    # Para compilação do Tesseract após a compilação do leptonica
+    export PKG_CONFIG_PATH=/usr/lib:/usr/local/lib:/usr/local/src/leptonica/
 
-cd libav && ./configure --enable-sram && make all install && cd ..
+    cd libav && ./configure --enable-sram && make all install && cd ..
 
-# Tesseract
-cd tesseract && ./autogen.sh && ./configure && make all install && cd ..
-cp -avR tessdata/* /usr/local/share/tessdata/
+    # Tesseract
+    cd tesseract && ./autogen.sh && ./configure && make all install && cd ..
+    cp -avR tessdata/* /usr/local/share/tessdata/
 
-# cpdf, versão 2.1 ou superior
-cd ocaml && ./configure && make world.opt && make install && cd ..
-mkdir -p /usr/local/man/man5
-# lib-findlib -- pode dar erro na instalação de páginas de man... é seguro ignorar, ou basta criar os diretórios faltantes e tentar novamente 
-cd lib-findlib  && ./configure && make all && make install && cd ..
-cd camlpdf && sed -i.bak s/\(uint32\)/\(uint32_t\)/g flatestubs.c && make && make install && cd ..
-cd cpdf-source && make all && make install && cp cpdf /usr/local/bin && cd ..
+    # cpdf, versão 2.1 ou superior
+    cd ocaml && ./configure && make world.opt && make install && cd ..
+    mkdir -p /usr/local/man/man5
+    # lib-findlib -- pode dar erro na instalação de páginas de man... é seguro ignorar, ou basta criar os diretórios faltantes e tentar novamente 
+    cd lib-findlib  && ./configure && make all && make install && cd ..
+    cd camlpdf && sed -i.bak s/\(uint32\)/\(uint32_t\)/g flatestubs.c && make && make install && cd ..
+    cd cpdf-source && make all && make install && cp cpdf /usr/local/bin && cd ..
 
-# poppler-utils, versão 0.42.0 ou superior
-cd poppler && ./autogen.sh && ./configure --enable-cmyk --enable-libcurl && make  all install && cd ..
+    # poppler-utils, versão 0.42.0 ou superior
+    cd poppler && ./autogen.sh && ./configure --enable-cmyk --enable-libcurl && make  all install && cd ..
 
-# Centos 6.9
-#   \_ Termina o shell usando o GCC 4.8 por default
-exit
+    # Centos 6.9
+    #   \_ Termina o shell usando o GCC 4.8 por default
+    exit
 
-# -----------------------  INSTALAÇÃO (obs.: os comandos devem ser executados como root)
 
 ## Comandos adicionais para configuração do módulo:
 	
-# Criação do usuário
-adduser ocr
+    # Criação do usuário
+    adduser ocr
 
-# Copie os arquivos ocr ocr-* para os diretórios corretos, conforme o sistema operacional
-cp ./usr/local/bin/ocr /usr/local/bin
+    # Copie os arquivos ocr ocr-* para os diretórios corretos, conforme o sistema operacional
+    cp ./usr/local/bin/ocr /usr/local/bin
 
-# Auto start (RedHat 6.7 e CentOs 6.9)
-cp ./usr/local/etc/init.d/ocr-redhat /etc/init.d/ocr 
-mv /etc
-chkconfig --add ocr
-chkconfig --level 2345 ocr on
+    # Auto start (RedHat 6.7 e CentOs 6.9)
+    cp ./usr/local/etc/init.d/ocr-redhat /etc/init.d/ocr 
+    mv /etc
+    chkconfig --add ocr
+    chkconfig --level 2345 ocr on
+    
+    # Auto start (Ubuntu 14.04)
+    cp ./usr/local/etc/init.d/ocr-ubuntu /etc/init.d/ocr
+    update-rd.d ocr defaults
+    
+    # Create pkg -- para instalação em outras máquinas sem a necessidade de novas compilações
+    cd /home/ocr
+    tar cvozf pkg-ocr.tgz /usr/local/bin /usr/local/lib* /usr/local/man/ /usr/local/sbin/ /usr/local/share/ /usr/local/etc /usr/local/include/ /home/ocr/ocr* /etc/init.d/ocr /etc/rc*.d/*ocr
+    su
 
-# Auto start (Ubuntu 14.04)
-cp ./usr/local/etc/init.d/ocr-ubuntu /etc/init.d/ocr
-update-rd.d ocr defaults
+# INSTALAÇÃO (obs.: os comandos devem ser executados como root)
+    # Criação do usuário
+    adduser ocr
 
-# Create pkg -- para instalação em outras máquinas sem a necessidade de novas compilações
-cd /home/ocr
-tar cvozf pkg-ocr.tgz /usr/local/bin /usr/local/lib* /usr/local/man/ /usr/local/sbin/ /usr/local/share/ /usr/local/etc /usr/local/include/ /home/ocr/ocr* /etc/init.d/ocr /etc/rc*.d/*ocr
-su
+    # Copie o pacote para os outros servidores e extraia com:
+    cd /
+    tar xovzf pkg-ocr.tgz
 
-# Copie o pacote para os outros servidores e extraia com:
-cd /
-tar xovzf pkg-ocr.tgz
+    # Instalando pré-requisitos RUNTIME em servidores adicionais
 
-# Instalando pré-requisitos RUNTIME em servidores adicionais
+    # Redhat 6.7 e CentOS 6.9
+    yum -y install perl-File-Find-Rule-Perl perl-File-Touch libtiff libpng openjpeg-libs libjpeg-turbo giflib zlib libicu pango cairo fontconfig ImageMagick gettext libwebp ghostscript
+    yum -y install libtiff libpng openjpeg libjpeg-turbo giflib libwebp zlib libicu pango cairo fontconfig gettext 
 
-# Redhat 6.7 e CentOS 6.9
-yum -y install perl-File-Find-Rule-Perl perl-File-Touch libtiff libpng openjpeg-libs libjpeg-turbo giflib zlib libicu pango cairo fontconfig ImageMagick gettext libwebp ghostscript
-yum -y install libtiff libpng openjpeg libjpeg-turbo giflib libwebp zlib libicu pango cairo fontconfig gettext 
-
-# Ubuntu 14.04
-apt-get install  libfile-find-rule-perl libfile-find-rule-perl-perl libtiff5 libpng12-0 libopenjpeg2 libjpeg-turbo8 libgif4 zlib1g libicu52 libpango1.0-0 libcairo2 fontconfig imagemagick gettext libwebp5 # libgcj14 
-apt-get install libtiff5 libpng12-0 libopenjpeg2 libjpeg8 libjpeg-turbo8 libjpeg8 zlib1g libpango1.0-0 libcairo2 libfontconfig1 libgettextpo0 ghostscript
+    # Ubuntu 14.04
+    apt-get install  libfile-find-rule-perl libfile-find-rule-perl-perl libtiff5 libpng12-0 libopenjpeg2 libjpeg-turbo8 libgif4 zlib1g libicu52 libpango1.0-0 libcairo2 fontconfig imagemagick gettext libwebp5 # libgcj14 
+    apt-get install libtiff5 libpng12-0 libopenjpeg2 libjpeg8 libjpeg-turbo8 libjpeg8 zlib1g libpango1.0-0 libcairo2 libfontconfig1 libgettextpo0 ghostscript
 
 # Inicie o serviço com
-service ocr start
+    service ocr start
