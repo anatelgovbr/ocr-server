@@ -6,13 +6,10 @@ COPY usr/local/bin/ocr /usr/local/bin/ocr
 COPY etc/init.d/ocr-ubuntu /etc/init.d/ocr
 COPY entrypoint.sh /entrypoint.sh
 
-RUN useradd -m ocr
-
 RUN apt-get -y update
 RUN apt-get -y install build-essential cmake libtool yasm pkg-config subversion git libgcj14 apt-utils
 RUN apt-get -y install curl
 RUN apt-get -y install libtiff-dev libpng-dev libopenjpeg-dev libjpeg8-dev libjpeg-turbo8-dev libjpeg-dev libgif-dev zlib1g-dev libicu-dev libpango1.0-dev libcairo2-dev libfontconfig1-dev libgettextpo-dev libnss3-dev
-#RUN apt-get -y install ttf-mscorefonts-installer
 
 RUN apt-get -y install wget cabextract xfonts-utils
 RUN wget -O mscorefonts.deb http://ftp.us.debian.org/debian/pool/contrib/m/msttcorefonts/ttf-mscorefonts-installer_3.4+nmu1_all.deb && \
@@ -78,6 +75,10 @@ RUN cd ghostscript-9.18 && ls && ./autogen.sh; ./configure && make all install
 
 RUN git clone https://github.com/coherentgraphics/cpdf-binaries.git && \
     cp cpdf-binaries/Linux-Intel-64bit/cpdf /usr/bin
+
+RUN apt-get -y install rsyslog libsys-syslog-perl
+
+RUN useradd -m ocr
 
 RUN chmod +x /usr/local/bin/ocr && \
     chmod +x /etc/init.d/ocr && \
