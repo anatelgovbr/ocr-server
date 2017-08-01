@@ -77,11 +77,7 @@ use Sys::Hostname;
 use IPC::Open3;
 use IO::Select;
 
-use Getopt::Std;
-use vars qw( $opt_d );
-
-#my $DEBUG = 2
-my $DEBUG = ($opt_d ? 2 : 0);
+my $DEBUG = 0;
 my $MAX_PGS = ($DEBUG==2 ? 1 : 0 + `cat /proc/cpuinfo  | grep -e '^processor' | wc -l`);
 my $MAX_FILES = ( !$DEBUG ? 2 : 1) ;
 
