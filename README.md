@@ -239,3 +239,20 @@ Quanto ao CPDF, é possível baixar a versão binária em: https://github.com/co
 
 # Inicie o serviço com
     service ocr start
+
+
+## Container Docker
+
+    O ocr-server também está disponível como um container Docker, permitindo o rápido provisionamento da solução em ambiente de produção. Todos os procedimento para construção da imagem do container podem ser encontrados no arquivo Dockerfile.
+    Para execução do serviço, basta que o docker instalado no servidor e executar o seguinte comando:
+
+        docker run --name <NOME_CONTAINER> -d -v <DIRETORIO_BASE>:/var/ocr-server guilhermeadc/ocr-server
+
+    onde:
+    --name : Nome atribuído à instância do container. Ex: ocr-server
+    -d : Indicação executar o container em background 
+    -v : Diretório de compartilhamento entre o servidor host e o container.
+         O parâmetro <DIRETORIO_BASE> deve ser substituído pelo diretório base para busca de arquivos.
+
+    Para vistualizar os logs de processamento do serviço, basta executar o seguinte comando:
+        docker logs <NOME_CONTAINER>
