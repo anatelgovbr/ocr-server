@@ -103,7 +103,7 @@ my $PDFSIG = 'pdfsig';
 # Depends on cpdf 2.1 or higher
 my $CPDF = 'cpdf';
 
-# Depends on Ghostscript 9.18
+# Depends on Ghostscript 9.22
 my $GS = 'gs';
 
 ## Depends on ImageMagick and http://www.fmwconcepts.com/imagemagick/downloadcounter.php?scriptname=textcleaner&dirname=textcleaner
