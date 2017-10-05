@@ -71,7 +71,7 @@ Author: Guilherme Chehab
  - Poppler-utils 0.42.0
  - Cpdf 2.1
  - ImageMagick 6.7.2-7
- - Ghostcript 9.18
+ - Ghostcript 9.22
 
 Na ausência deles na distribuição do sistema operacional, o uso de versões antigas desses componentes podem comprometer o correto funcionamento do sistema
 
@@ -95,25 +95,6 @@ Recomenda-se que o equipamento tenha em torno de 1,5 GB de RAM para cada core de
 A configuração do servidor pode ser dimensionada com base no tempo desejado para processamento de grandes arquivos (> 100 páginas). Cada página tem sua própria thread de processamento, até o limite de $MAX_PGS, cujo default é o no. de cores de CPU. Em média cada página demora em torno de 18 segundos em uma CPU Xeon E5 4670@2.6GHz. Assim, com 16 CPUs, o desempenho agregado é em torno de 1,2 segundos por página.
 
 Para operação multi instância, basta instalar quantos servidores forem necessários e eles podem ter acesso aos mesmos diretórios de entrada que podem ser compartilhamentos SAMBA/CIFS/Windows ou NFS.
-
-
-# Container Docker
-
-    O OCR-Server também está disponível como um container Docker, permitindo o rápido provisionamento da solução em ambiente de produção. Todos os procedimento para construção da imagem do container podem ser encontrados no arquivo Dockerfile.
-	
-	Para execução do serviço, basta que o docker instalado no servidor e executar o seguinte comando:
-
-        docker run --name <NOME_CONTAINER> -d -v <DIRETORIO_BASE>:/var/ocr-server guilhermeadc/ocr-server
-
-    Onde:
-    --name : Nome atribuído à instância do container. Ex: ocr-server
-    -d : Indicação executar o container em background 
-    -v : Diretório de compartilhamento entre o servidor host e o container.
-         O parâmetro <DIRETORIO_BASE> deve ser substituído pelo diretório base para busca de arquivos.
-
-    Para vistualizar os logs de processamento do serviço, basta executar o seguinte comando:
-        docker logs <NOME_CONTAINER>
-
 
 # COMPILAÇÃO dos pré requisitos (obs.: os comandos devem ser executados como root)
 
