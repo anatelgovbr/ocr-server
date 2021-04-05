@@ -38,7 +38,11 @@
 #		Fix: create subpaths on error folder
 #		Fix: trying to reduce overhead on temporary folder
 #	2.1.0	Complete color saturation detection and convertion to gray scale or bitmap
-#		Added unpaper filtering
+#		Added filtering pipeline -- uses when $FILTER is defined
+#		Main daemon runs now in foreground when debugging
+#		Now using '-oem 1' option to tesseract as it is much faster, and there is an issue with default OS trained data
+#		Fix: detection of files with unicode filenames
+#		Fix: now uses current shell to spawn process, plain open3 where not using default shell env
 #
 #	TODO: 	- Changes get_imgs and OCR processing to enable pages with more than one image -- it
 #		would not work on previous versions that assumed #pages = #imgs. Version 1.0.1 counts them
@@ -53,6 +57,7 @@
 #		- Add some job control web interface
 #		- Add end user interface to submit files through web
 #		- Add check external programs version requirements before running
+#		- Use opencv to detect PDF quality and auto apply filtering using templates (layout double, for instance)
 #
 #	BUGS:	- When image is of type stencil or encoding image, cropping information is lost, and page is shown different than
 #		original, this is due to using pdftoppm instead of pdfimages 
@@ -89,7 +94,7 @@ my $CHECK_COLOR = 1; # If it has to check if image is reaaly colored or if it ca
 # Command dependencies
 
 # depends on tesseract-ocr an tesseract-ocr-por 3.05-dev or higher -- for pdf/a Tesseract 4.0 is recomended
-my $TESSERACT = 'tesseract --oem 0'; 		# if Tesseract => 4.0
+my $TESSERACT = 'tesseract --oem 1'; 		# if Tesseract => 4.0
 #my $TESSERACT = 'tesseract';			# if Tesseract < 4.0
 
 # Depends on pdftk 2.02 or higher
@@ -114,12 +119,14 @@ my $CONVERT = 'convert';
 # If it is needed further filtering
 #my $FILTER = '/usr/local/bin/textcleaner -g -e stretch -f 25 -o 10 -u -s 1 -T -p 10 ';
 #my $FILTER = 'unpaper -v -dv .5 -ds 700  -dn bottom -l single -m 0,262,1160,2018 --no-mask-center --no-blackfilter  --no-grayfilter ';
-my $FILTER = 'unpaper -v -dv .5 -ds 700  -l double -output-pages 2 ';
+#my $FILTER = 'unpaper -v -dv .5 -ds 700  -l double -output-pages 2 ';
+my $FILTER;
+
 
 #my @BASE_DIRS = (	'/mnt/protocolo_sede/DIGITALIZAÇÃO/ARQUIVOS PROTOCOLO/OCR/',
 #			'/mnt/protocolo_sede/DIGITALIZAÇÃO/ARQUIVOS_PROCESSOS/OCR/' );
 
-my @BASE_DIRS = ('/var/ocr-server/');
+my @BASE_DIRS = !$DEBUG ? ('/var/ocr-server/') :('/home/guilherme/ocr-server/data/');
 
 my %SUB_DIRS = ( 'IN'=>'Entrada', 'OUT'=>'Saida', 'PROC'=>'Originais_Processados', 'TEMP'=>'/tmp/ocr_tmp', 'ERROR' => 'Erro' );
 
@@ -167,8 +174,11 @@ foreach my $exec ( $TESSERACT, $PDFTK, $PDFFONTS, $PDFIMAGES, $PDFSIG, $CPDF, $G
 	die "Error: $exec not found on path: $ENV{PATH}, check dependencies\n" if ( `which $exec | wc -l ` == 0);
 }
 
-
 foreach my $DIR (@BASE_DIRS) {
+    if ($DEBUG) {
+	    main ($DIR, $DIR.$SUB_DIRS{IN}, $DIR.$SUB_DIRS{OUT}, $DIR.$SUB_DIRS{PROC}, $SUB_DIRS{TEMP}, $DIR.$SUB_DIRS{ERROR});
+	    exit 0;
+    }
 
     defined(my $pid = fork) or die "$0: cannot fork: $!\n";
     if (!$pid) {
@@ -225,7 +235,6 @@ sub main {
 		$count = scalar keys %files_in;
 
 		foreach my $file (sort { ((-f $a) ? (stat $a)[9] : 0) <=> ((-f $b) ? (stat $b)[9] : 0)} keys %files_in ) {
-
 			next if ( glob ("\"$file.*.tmp\"")); 		
 
 			select (undef, undef, undef, 1 + rand 2);	# sleep between 1 and 3 seconds
@@ -249,14 +258,14 @@ sub main {
 					}
 				};
 
-				if (!glob( "$file.*.tmp")) { 		# Do nothing with files in processing by another process
+				if (!glob( "\"$file\".*.tmp")) { 		# Do nothing with files in processing by another process
 					if (my $pid = fork) {
-						while (! glob ("$file.$host.tmp")) {sleep 1;};	# Wait until temp file is created
+						while (! glob ("\"$file\".$host.tmp")) {sleep 1;};	# Wait until temp file is created
 						$files_in{$file} = 2;
 						$pids{$pid}=$file;
 					} else {
 						touch ("$file.$host.tmp");
-						while (! glob ("$file.$host.tmp")) {sleep 1;};	# Wait until temp file is created
+						while (! glob ("\"$file\".$host.tmp")) {sleep 1;};	# Wait until temp file is created
 						select (undef, undef, undef, 1 + rand 2);	# sleep between 1 and 3 seconds
 						ocr ( $DIR, $IN, $OUT, $PROC, $TEMP, $ERRO, $file);
 						exit (0); # It is never executed
@@ -387,10 +396,10 @@ sub ocr {
 		} else {
 			$0 = "ocr $in_name (".($i+1)."/$pages)" if(!$DEBUG);
 
-			if (is_ocred ("${tmpdir}/${pg}.pdf")) {
-				#move ("${tmpdir}/${pg}.pdf","${tmpdir}/${pg}-cpdf.pdf");
-				#print "\t\t${in_file}: ".(${i}+1)." / $pages: Page already has text layer, ignoring page\n" if $DEBUG;
-				#exit 0;
+			if (!$DEBUG && is_ocred ("${tmpdir}/${pg}.pdf")) {
+				move ("${tmpdir}/${pg}.pdf","${tmpdir}/${pg}-cpdf.pdf");
+				print "\t\t${in_file}: ".(${i}+1)." / $pages: Page already has text layer, ignoring page\n" if $DEBUG;
+				exit 0;
 			}
 
 			if (! defined $img_t[$i] ) {
@@ -651,6 +660,11 @@ sub get_pages {
 	my $dumb;
 
 	my ($exit, $cmd, @lines, @err) = exec_cmd("${PDFTK} \"${in_file}\" dump_data");
+	if ($DEBUG==2) { 
+		print "\t\t\t${in_file} -> ${PDFTK} dump_data:  $exit\n";
+		print "\t\t\t\t$_" for @lines ;
+		print "\t\t\t\t$_" for @err ;
+	};
 
 	foreach (@lines)  {
 		chomp;
@@ -669,6 +683,11 @@ sub get_imgs {
         my ($dumb, $i, $page, $type, $width, $height, $color, $comp, $bpc, $enc, $int, $obj, $id, $xppi, $yppi );
 
 	my ($exit, $cmd, @lines, @err) = exec_cmd("${PDFIMAGES} -list \"${in_file}\"");
+	if ($DEBUG==2) { 
+		print "\t\t\t${in_file} -> ${PDFIMAGES} -list: $exit\n";
+		print "\t\t\t\t$_" for @lines ;
+		print "\t\t\t\t$_" for @err ;
+	};
 	$i = 0;
 
 	foreach my $line (@lines)  {
@@ -750,6 +769,8 @@ sub child_wait {
 	my ($pids,$time) = @_;
 	my $count = scalar keys (%$pids);
 	my @ended;
+
+	return if (! %$pids);
 	
 	my $found=0;
 	while (!$found) {
@@ -767,47 +788,48 @@ sub child_wait {
 }
 
 sub exec_cmd {
-	my ($cmd) = @_;
-	my $rc;
-	my @out=();
-	my @err=();
+        my ($cmd) = @_;
+        my $rc;
+        my @out=();
+        my @err=();
 
-	my $pid = open3(*CMD_IN, *CMD_OUT, *CMD_ERR, $cmd);
+        my $pid = open3(*CMD_IN, *CMD_OUT, *CMD_ERR, $ENV{'SHELL'}." -c '".$cmd."'");
 
-	$SIG{CHLD} = sub {
-		$rc = ($? >>8); 
-	};
+        $SIG{CHLD} = sub {
+                $rc = ($? >>8);
+        };
 
-	print CMD_IN "";
-	close(CMD_IN);
+        print CMD_IN "";
+        close(CMD_IN);
 
-	my $selector = IO::Select->new();
-	$selector->add(*CMD_ERR, *CMD_OUT);
+        my $selector = IO::Select->new();
+        $selector->add(*CMD_ERR, *CMD_OUT);
 
-	while (my @ready = $selector->can_read) {
-	    foreach my $fh (@ready) {
-        	if (fileno($fh) == fileno(CMD_ERR)) { 
-			while (<CMD_ERR>) {
-				push @err,$_;
-			}
-		} else {
-        		while (<CMD_OUT>) {
-				push @out,$_;
-			}
-		}
-        	if (eof ($fh)) {
-			$rc = ($? >>8) if (waitpid($pid, 0)>0);
-			$selector->remove($fh);
-		}
-	    }		
-	}
+        while (my @ready = $selector->can_read) {
+            foreach my $fh (@ready) {
+                if (fileno($fh) == fileno(CMD_ERR)) {
+                        while (<CMD_ERR>) {
+                                push @err,$_;
+                        }
+                } else {
+                        while (<CMD_OUT>) {
+                                push @out,$_;
+                        }
+                }
+                if (eof ($fh)) {
+                        $rc = ($? >>8) if (waitpid($pid, 0)>0);
+                        $selector->remove($fh);
+                }
+            }
+        }
 
-	$rc = ($? >>8) if (waitpid($pid, 0)>0);
+        $rc = ($? >>8) if (waitpid($pid, 0)>0);
 
-	close(CMD_OUT);
-	close(CMD_ERR);
+        close(CMD_OUT);
+        close(CMD_ERR);
 
-	$SIG{CHLD} = 'IGNORE';
+        $SIG{CHLD} = 'IGNORE';
 
-	return $rc,$cmd,@out,@err;
-} 
+        return $rc,$cmd,@out,@err;
+}
+
