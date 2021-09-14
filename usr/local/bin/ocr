@@ -44,9 +44,10 @@
 #		Now using '-oem 1' option to tesseract as there is an issue with default OS trained data
 #		Fix: detection of files with unicode filenames
 #		Fix: now uses current shell to spawn process, plain open3 where not using default shell env, needed for java progs
-#	2.1.1	Fixed docker on Ubuntu 20.04
+#	2.1.1	Fixed docker on Ubuntu 21.04
 #		Color conversion to gray is off by default
 #		Fix: new images format from INPE samples
+#		Fix: now uses default tesseract algorithms
 #
 #	TODO: 	- Changes get_imgs and OCR processing to enable pages with more than one image -- it
 #		would not work on previous versions that assumed #pages = #imgs. Version 1.0.1 counts them
@@ -99,8 +100,8 @@ my $COLOR_THRES = .03; # Min color spread, below this value, will convert image 
 # Command dependencies
 
 # depends on tesseract-ocr an tesseract-ocr-por 3.05-dev or higher -- for pdf/a Tesseract 4.0 is recomended
-my $TESSERACT = 'tesseract --oem 1'; 		# if Tesseract => 4.0
-#my $TESSERACT = 'tesseract';			# if Tesseract < 4.0
+#my $TESSERACT = 'tesseract --oem 2'; 		# if Tesseract => 4.0
+my $TESSERACT = 'tesseract';			# if Tesseract < 4.0
 
 # Depends on pdftk 2.02 or higher
 my $PDFTK = 'pdftk';
@@ -142,6 +143,7 @@ my %SUB_DIRS = ( 'IN'=>'Entrada', 'OUT'=>'Saida', 'PROC'=>'Originais_Processados
 # Safeguard im case of cpuinfo has not identified correctly the number of CPUs 
 $MAX_PGS = ($MAX_PGS==0) ? 4 : $MAX_PGS;
 
+$ENV{'SHELL'} = exists $ENV{'SHELL'} ? $ENV{'SHELL'} : '/bin/bash';
 $ENV{'PATH'} = '/usr/local/bin:/usr/bin:/bin';
 $ENV{'IFS'} = '\t\n';
 
