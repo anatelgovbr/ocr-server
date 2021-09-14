@@ -39,6 +39,10 @@ Author: Guilherme Chehab
 	- Add support for stencil type and image encoding scans, changed default extraction method for unknown types/encodings
 	- Fix: create subpaths on error folder
 	- Fix: trying to reduce overhead on temporary folder
+- 2.1/2.1.1
+	- Filter pipelines: disabled by default
+	- Color reduction: disabled by default
+	- Stock Ubuntu 20.x docker
 	 
 ##	TODO:
  - Changes get_imgs and OCR processing to enable pages with more than one image -- it would not work on previous versions that assumed #pages = #imgs. Version 1.0.1 counts them diferently but does not treat it adequately -- shall require better pdf´s internal structure handling
@@ -102,7 +106,7 @@ O OCR-Server também está disponível como um container Docker, permitindo o r�
 
 Para execução do serviço, basta que o docker instalado no servidor e executar o seguinte comando:
 
-    docker run --name <NOME_CONTAINER> -d -v <DIRETORIO_BASE>:/var/ocr-server guilhermeadc/ocr-server
+    docker run --name <NOME_CONTAINER> -d -v <DIRETORIO_BASE>:/var/ocr-server gchehab/ocr-server
 
     Onde:
     --name : Nome atribuído à instância do container. Ex: ocr-server
@@ -110,7 +114,7 @@ Para execução do serviço, basta que o docker instalado no servidor e executar
     -v : Diretório de compartilhamento entre o servidor host e o container.
          O parâmetro <DIRETORIO_BASE> deve ser substituído pelo diretório base para busca de arquivos.
 
-Para vistualizar os logs de processamento do serviço, basta executar o seguinte comando:
+Para visualizar os logs de processamento do serviço, basta executar o seguinte comando:
 
     docker logs <NOME_CONTAINER>
 

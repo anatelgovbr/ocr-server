@@ -1,5 +1,5 @@
 
-FROM ubuntu:20.04
+FROM ubuntu:21.04
 
 # Cópia de arquivos do projeto OCR-SERVER
 COPY usr/local/bin/ocr /usr/local/bin/ocr
