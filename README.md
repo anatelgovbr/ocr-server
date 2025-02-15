@@ -261,3 +261,8 @@ Quanto ao CPDF, é possível baixar a versão binária em: https://github.com/co
 
 # Inicie o serviço com
     service ocr start
+
+## Erros ou Sugestões
+1. [Abrir Issue](https://github.com/anatelgovbr/ocr-server/issues) no repositório do GitHub da solução se ocorrer erro na execução de sua instalação.
+2. [Abrir Issue](https://github.com/anatelgovbr/ocr-server/issues) no repositório do GitHub da solução se ocorrer erro na sua operação.
+3. Na abertura da Issue utilizar o modelo **"1 - Reportar Erro"**.
