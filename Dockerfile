@@ -15,17 +15,16 @@ RUN apt-get -y update && \
     apt-get install -y --no-install-recommends \
     tesseract-ocr tesseract-ocr-por tesseract-ocr-eng tesseract-ocr-spa leptonica-progs \
     poppler-utils pdftk-java unpaper ghostscript imagemagick rsyslog \
-    wget perl libfile-find-rule-perl libfile-touch-perl libunix-syslog-perl && \
+    perl libfile-find-rule-perl libfile-touch-perl libunix-syslog-perl && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 RUN sed -i 's/rights="none" pattern="PDF"/rights="read|write" pattern="PDF"/' /etc/ImageMagick-6/policy.xml
 
-RUN wget \
-    https://github.com/coherentgraphics/cpdf-binaries/raw/v2.9/Linux-Intel-64bit/cpdf \
-    -O /usr/local/bin/cpdf && \
-    chmod 755 /usr/local/bin/cpdf
+COPY cpdf /usr/local/bin/cpdf
+RUN chmod 755 /usr/local/bin/cpdf
 
-RUN useradd -m ocr
+RUN groupadd -g 1007 ocr && \
+    useradd -m -u 1005 -g 1007 ocr
 
 # Cópia de arquivos do projeto OCR-SERVER
 COPY usr/local/bin/ocr /usr/local/bin/ocr

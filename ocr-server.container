@@ -1,0 +1,15 @@
+[Unit]
+Description=OCR Server
+After=network.target
+
+[Container]
+Image=localhost/ocr-server
+ContainerName=ocr-server
+SecurityLabelDisable=true
+Volume=/mnt/protocolo/DIGITALIZAÇÃO/ARQUIVOS_PROCESSOS/OCR_Server_2.1:/var/ocr-server
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

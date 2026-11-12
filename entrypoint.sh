@@ -1,24 +1,19 @@
 #!/usr/bin/env bash
 
-# Inicializa serviço de log
+# Inicializa serviço de log (requer root)
 rsyslogd 2>/dev/null || true
 sleep 1
 
-# Cria estrutura de pastas para monitoramento de arquivos
-mkdir -p /var/ocr-server/
-mkdir -p /var/ocr-server/Entrada
-mkdir -p /var/ocr-server/Saida
-mkdir -p /var/ocr-server/Originais_Processados
-mkdir -p /var/ocr-server/Erro
-chmod -R 777 /var/ocr-server
+# Cria estrutura de pastas como uid=1005 (forceuid do CIFS)
+runuser -u ocr -- bash -c 'mkdir -p /var/ocr-server/{Entrada,Saida,Originais_Processados,Erro}'
 
-# Iniciar serviço do OCR-Server
-service ocr start
+# Inicia o daemon OCR como uid=1005/gid=1007
+runuser -u ocr -- /usr/local/bin/ocr &
 
 # Aguarda criação do syslog e exibe logs
 while [ ! -f /var/log/syslog ]; do sleep 1; done
 
-while [ 1 ]; do
+while true; do
 	tail -f /var/log/syslog
-	sleep 1;
+	sleep 1
 done

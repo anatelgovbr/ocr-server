@@ -473,7 +473,7 @@ sub ocr {
 			
 				# Check if image can be safely colour reduced
 				my $is_colored = 1;
-				my $format = "pbm";
+					my $format = "pnm";
 				if ($CHECK_COLOR) {
 					$cmd = "${CONVERT} \"${image}\" \Q(\E -clone 0 -colorspace gray \Q)\E  -compose difference -composite -separate -evaluate-sequence mean -threshold 4% -format \"%[fx:mean]\" info:";
 					($exit, $cmd, @out, @err) = exec_cmd ($cmd);
@@ -718,7 +718,7 @@ sub get_imgs {
 	foreach my $line (@lines)  {
                 chomp $line;
 		$line =~ s/^ {1,}//;
-		if ( $line !~  /^page|^----/ ) {
+		if ( $line !~  /^page|^----/ && $line =~ /^\d/ ) {
 			($page, $i , $type, $width, $height, $color, $comp, $bpc, $enc, $int, $obj, $id, $xppi, $yppi) = split / {1,}/,$line;
 			@$page_img[$page-1]=$i;
 			@$w[$page-1] = $width;
